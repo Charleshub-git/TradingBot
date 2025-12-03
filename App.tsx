@@ -1,10 +1,11 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Play, Pause, RefreshCw, Zap, BrainCircuit, Database, Settings, X, Layers } from 'lucide-react';
+import { Play, Pause, RefreshCw, Zap, BrainCircuit, Database, Settings, X, Layers, Wifi, Activity } from 'lucide-react';
 import { Candle, Trade, BotStatus, Strategy } from './types';
 import { generateInitialData, generateNextCandle, fetchHistoricalData } from './services/dataGenerator';
 import { processIndicators } from './services/math';
 import { analyzeMarket } from './services/geminiService';
+import { connectBinanceStream } from './services/websocketService';
 import ChartPanel from './components/ChartPanel';
 import StatsPanel from './components/StatsPanel';
 import LogPanel from './components/LogPanel';
@@ -19,6 +20,7 @@ const RISK_REWARD_RATIO = 1.5; // Take Profit relative to SL distance
 export default function App() {
   const [data, setData] = useState<Candle[]>([]);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [isLive, setIsLive] = useState(false); // Live WebSocket Mode
   const [activeTrade, setActiveTrade] = useState<Trade | null>(null);
   const [tradeHistory, setTradeHistory] = useState<Trade[]>([]);
   const [logs, setLogs] = useState<{time: number, message: string, type: 'INFO' | 'SUCCESS' | 'WARNING' | 'ERROR'}[]>([]);
@@ -35,6 +37,7 @@ export default function App() {
   const [alpacaConfig, setAlpacaConfig] = useState({ key: '', secret: '' });
   
   const backlogRef = useRef<Candle[]>([]);
+  const wsRef = useRef<{ close: () => void } | null>(null);
 
   // Initialize Data
   useEffect(() => {
@@ -54,9 +57,11 @@ export default function App() {
                 setData(processIndicators(initialContext));
                 addLog(`Loaded ${rawData.length} candles. (${isReal ? 'Real Binance Data' : 'Generated Data'})`, "SUCCESS");
                 addLog(`Simulation ready. ${backlogRef.current.length} historical candles queued for replay.`, "INFO");
+            } else {
+                 throw new Error("No data returned");
             }
         } catch (e) {
-            addLog("Data fetch failed. Using generator.", "ERROR");
+            addLog("API unreachable. Falling back to synthetic generator.", "WARNING");
             const fallback = generateInitialData(1000);
             setData(processIndicators(fallback));
         }
@@ -81,6 +86,86 @@ export default function App() {
     addLog("Alpaca API credentials saved locally.", "SUCCESS");
     setIsSettingsOpen(false);
   };
+
+  // --- LIVE DATA HANDLING ---
+  const toggleLiveMode = async () => {
+      if (isLive) {
+          // Stop Live Mode
+          if (wsRef.current) wsRef.current.close();
+          wsRef.current = null;
+          setIsLive(false);
+          addLog("Live connection closed. Returning to simulation mode.", "INFO");
+      } else {
+          // Start Live Mode
+          setIsPlaying(false); // Stop simulation if running
+          setIsLive(true);
+          
+          addLog("Connecting to Binance WebSocket...", "INFO");
+          
+          // First, refresh history to ensure no gap (if possible)
+          try {
+             const rawData = await fetchHistoricalData('BTCUSDT', TIMEFRAME);
+             if (rawData.length > 0) {
+                 setData(processIndicators(rawData));
+                 backlogRef.current = [];
+                 setIsRealData(true);
+             } else {
+                 addLog("Could not sync historical data. Charts may be discontinuous.", "WARNING");
+             }
+          } catch(e) {
+              addLog("Failed to sync history before live connection", "WARNING");
+          }
+
+          wsRef.current = connectBinanceStream(
+              'btcusdt', 
+              TIMEFRAME, 
+              (liveCandle, isFinal) => {
+                  setData(prevData => {
+                      const lastCandle = prevData[prevData.length - 1];
+                      let newData = [...prevData];
+
+                      if (lastCandle && liveCandle.time === lastCandle.time) {
+                          // Update existing candle
+                          newData[newData.length - 1] = liveCandle;
+                      } else if (lastCandle && liveCandle.time > lastCandle.time) {
+                          // New candle started
+                          newData.push(liveCandle);
+                          // Keep array size manageable
+                          if (newData.length > 500) newData.shift();
+                      } else {
+                          // Should not happen often, but if we get older data ignore or handle
+                          return prevData;
+                      }
+                      
+                      // Re-calc indicators on every tick (can be optimized, but ok for <1000 items)
+                      return processIndicators(newData);
+                  });
+                  
+                  if (isFinal) {
+                      addLog(`Candle Closed: $${liveCandle.close}`, "INFO");
+                  }
+              },
+              (error) => {
+                  // On Error
+                  console.error("Live Stream Error", error);
+                  addLog("Live Stream Connection Failed (Firewall/SSL).", "ERROR");
+                  setIsLive(false);
+                  if (wsRef.current) wsRef.current.close();
+                  wsRef.current = null;
+              }
+          );
+          
+          addLog("Live Stream Connected. Receiving real-time updates.", "SUCCESS");
+      }
+  };
+
+  // Cleanup WS on unmount
+  useEffect(() => {
+      return () => {
+          if (wsRef.current) wsRef.current.close();
+      }
+  }, []);
+
 
   // --- TRADING LOGIC ---
 
@@ -142,7 +227,8 @@ export default function App() {
 
   // Strategy Execution Hook
   useEffect(() => {
-    if (!isPlaying || data.length === 0) return;
+    // Only run logic if we have data and (Playing Simulation OR Live Mode)
+    if ((!isPlaying && !isLive) || data.length === 0) return;
 
     const last = data[data.length - 1];
     
@@ -210,7 +296,9 @@ export default function App() {
              // checking state is okay if we prevent spamming. 
              // Ideally we check prevCandle, but activeTrade check handles spamming.
              // We add a random factor or stricter check to simulate waiting for a pullback or breakout
-             if (Math.random() > 0.7) { // Simulated "setup confirmation" chance
+             // In Live mode, we reduce randomness because we can't wait infinite time
+             const threshold = isLive ? 0.3 : 0.7;
+             if (Math.random() > threshold) { 
                  openTrade(last, 'LONG', `[Vegas] Price > Tunnel + EMA12 Bullish`);
              }
         }
@@ -220,19 +308,20 @@ export default function App() {
         const ema12CrossDown = last.ema12 < last.ema144;
 
         if (isBelowTunnel && ema12CrossDown && last.rsi < 50) {
-            if (Math.random() > 0.7) {
+            const threshold = isLive ? 0.3 : 0.7;
+            if (Math.random() > threshold) {
                 openTrade(last, 'SHORT', `[Vegas] Price < Tunnel + EMA12 Bearish`);
             }
         }
     }
 
-  }, [data, isPlaying, activeTrade, openTrade, closeTrade, currentStrategy]);
+  }, [data, isPlaying, isLive, activeTrade, openTrade, closeTrade, currentStrategy]);
 
 
   // Simulation Loop
   useEffect(() => {
     let interval: any;
-    if (isPlaying) {
+    if (isPlaying && !isLive) {
       interval = setInterval(() => {
         setData(prevData => {
            let nextCandle: Candle;
@@ -255,7 +344,7 @@ export default function App() {
       }, 100); 
     }
     return () => clearInterval(interval);
-  }, [isPlaying, isRealData]);
+  }, [isPlaying, isLive, isRealData]);
 
   const handleManualAnalysis = async () => {
     if (data.length === 0) return;
@@ -304,6 +393,11 @@ export default function App() {
                         <Database size={10} /> Real Binance Data
                     </span>
                 )}
+                {isLive && (
+                    <span className="flex items-center gap-1 text-[10px] bg-red-900/50 text-red-400 px-2 py-0.5 rounded border border-red-800 animate-pulse">
+                        <Activity size={10} /> LIVE STREAM
+                    </span>
+                )}
             </div>
           </div>
         </div>
@@ -335,27 +429,42 @@ export default function App() {
                 <BrainCircuit size={16} />
                 {isAnalyzing ? "..." : "AI Analyst"}
             </button>
+            
+            <button 
+                onClick={toggleLiveMode}
+                className={`flex items-center gap-2 px-3 py-2 rounded-md transition-colors text-sm font-bold ${isLive ? 'bg-red-600 text-white hover:bg-red-700' : 'bg-gray-800 text-gray-400 hover:text-white hover:bg-gray-700'}`}
+                title={isLive ? "Disconnect Live Stream" : "Connect Live Stream"}
+            >
+                <Wifi size={18} className={isLive ? "animate-pulse" : ""} />
+                {isLive ? "LIVE" : "GO LIVE"}
+            </button>
+
             <button 
                 onClick={() => setIsSettingsOpen(true)}
                 className="p-2 hover:bg-gray-800 rounded-md text-gray-400 transition-colors"
+                title="Settings"
             >
                 <Settings size={20} />
             </button>
             <button 
                 onClick={() => window.location.reload()}
                 className="p-2 hover:bg-gray-800 rounded-md text-gray-400"
+                title="Reset/Reload"
             >
                 <RefreshCw size={20} />
             </button>
+            
+            {/* Play button disabled in Live Mode */}
             <button
                 onClick={() => setIsPlaying(!isPlaying)}
-                className={`flex items-center gap-2 px-6 py-2 rounded-md font-bold transition-all ${
+                disabled={isLive}
+                className={`flex items-center gap-2 px-6 py-2 rounded-md font-bold transition-all disabled:opacity-30 disabled:cursor-not-allowed ${
                 isPlaying 
                     ? 'bg-yellow-600 hover:bg-yellow-700 text-white' 
                     : 'bg-green-600 hover:bg-green-700 text-white'
                 }`}
             >
-                {isPlaying ? <span className="flex items-center gap-2"><Pause size={18} /> STOP</span> : <span className="flex items-center gap-2"><Play size={18} /> START</span>}
+                {isPlaying ? <span className="flex items-center gap-2"><Pause size={18} /> STOP</span> : <span className="flex items-center gap-2"><Play size={18} /> SIMULATE</span>}
             </button>
         </div>
       </div>
@@ -385,7 +494,7 @@ export default function App() {
         <div className="col-span-3 flex flex-col gap-4 min-h-0">
           <div className="shrink-0">
             <StatsPanel 
-                status={activeTrade ? BotStatus.IN_POSITION : isPlaying ? BotStatus.SCANNING : BotStatus.IDLE}
+                status={activeTrade ? BotStatus.IN_POSITION : (isPlaying || isLive) ? BotStatus.SCANNING : BotStatus.IDLE}
                 lastCandle={lastCandle}
                 activeTrade={activeTrade}
                 pnl={pnl}

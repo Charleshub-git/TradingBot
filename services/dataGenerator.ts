@@ -67,6 +67,7 @@ export const fetchHistoricalData = async (symbol: string = 'BTCUSDT', interval: 
     const response = await fetch(`https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`);
     
     if (!response.ok) {
+        // Silently throw to trigger catch block
         throw new Error(`Binance API Error: ${response.statusText}`);
     }
 
@@ -83,7 +84,8 @@ export const fetchHistoricalData = async (symbol: string = 'BTCUSDT', interval: 
     }));
 
   } catch (error) {
-    console.error("Failed to fetch real data, falling back to generator.", error);
-    return generateInitialData(limit);
+    // Return empty array to signal fallback needed, without crashing logic
+    console.warn("Binance API unreachable (likely firewall/SSL). Using generator.");
+    return [];
   }
 };
