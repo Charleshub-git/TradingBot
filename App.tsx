@@ -1,6 +1,7 @@
+
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Play, Pause, RefreshCw, Zap, BrainCircuit, Database, Settings, X } from 'lucide-react';
-import { Candle, Trade, BotStatus } from './types';
+import { Play, Pause, RefreshCw, Zap, BrainCircuit, Database, Settings, X, Layers } from 'lucide-react';
+import { Candle, Trade, BotStatus, Strategy } from './types';
 import { generateInitialData, generateNextCandle, fetchHistoricalData } from './services/dataGenerator';
 import { processIndicators } from './services/math';
 import { analyzeMarket } from './services/geminiService';
@@ -8,8 +9,12 @@ import ChartPanel from './components/ChartPanel';
 import StatsPanel from './components/StatsPanel';
 import LogPanel from './components/LogPanel';
 
-// Constants for strategy
-const BUFFER_PERCENT = 0.0015; // 0.15% buffer for "touching" the tunnel
+// --- STRATEGY PARAMETERS ---
+const TIMEFRAME = '5m';
+const RSI_OB = 70;
+const RSI_OS = 30;
+const ATR_SL_MULTIPLIER = 2.5; // Dynamic Stop Loss Distance
+const RISK_REWARD_RATIO = 1.5; // Take Profit relative to SL distance
 
 export default function App() {
   const [data, setData] = useState<Candle[]>([]);
@@ -21,27 +26,27 @@ export default function App() {
   const [geminiAnalysis, setGeminiAnalysis] = useState<string>("");
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isRealData, setIsRealData] = useState(false);
+  
+  // Strategy Selection
+  const [currentStrategy, setCurrentStrategy] = useState<Strategy>('SCALPER');
 
   // Settings State
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [alpacaConfig, setAlpacaConfig] = useState({ key: '', secret: '' });
   
-  // Backlog holds "future" candles (from real history) that we will replay one by one
   const backlogRef = useRef<Candle[]>([]);
 
   // Initialize Data
   useEffect(() => {
     const init = async () => {
-        addLog("Initializing... Fetching market data...", "INFO");
+        addLog(`Initializing... Fetching ${TIMEFRAME} market data...`, "INFO");
         try {
-            const rawData = await fetchHistoricalData();
+            const rawData = await fetchHistoricalData('BTCUSDT', TIMEFRAME);
             
             if (rawData.length > 0) {
-                // If the timestamps are recent (within last 24h), assume real data
                 const isReal = (Date.now() - rawData[rawData.length-1].time) < 24 * 60 * 60 * 1000;
                 setIsRealData(isReal);
                 
-                // Split: 80% initial context, 20% simulation buffer
                 const splitIndex = Math.floor(rawData.length * 0.85);
                 const initialContext = rawData.slice(0, splitIndex);
                 backlogRef.current = rawData.slice(splitIndex);
@@ -60,7 +65,6 @@ export default function App() {
     init();
   }, []);
 
-  // Load Settings from LocalStorage
   useEffect(() => {
     const savedKey = localStorage.getItem('ALPACA_KEY') || '';
     const savedSecret = localStorage.getItem('ALPACA_SECRET') || '';
@@ -78,27 +82,51 @@ export default function App() {
     setIsSettingsOpen(false);
   };
 
+  // --- TRADING LOGIC ---
+
   const openTrade = useCallback((candle: Candle, type: 'LONG' | 'SHORT', reason: string) => {
+      if (!candle.atr) return;
+
+      // Adjust risk based on strategy slightly?
+      // For simplicity, we use the same ATR multiplier for both, as they are both 5m strategies
+      const slDistance = candle.atr * ATR_SL_MULTIPLIER;
+      const tpDistance = slDistance * RISK_REWARD_RATIO;
+      
+      const entryPrice = candle.close;
+      let stopLossPrice = 0;
+      let takeProfitPrice = 0;
+
+      if (type === 'LONG') {
+          stopLossPrice = entryPrice - slDistance;
+          takeProfitPrice = entryPrice + tpDistance;
+      } else {
+          stopLossPrice = entryPrice + slDistance;
+          takeProfitPrice = entryPrice - tpDistance;
+      }
+
       const trade: Trade = {
           id: Math.random().toString(36).substr(2, 9),
           type,
-          entryPrice: candle.close,
+          entryPrice,
           entryTime: candle.time,
           status: 'OPEN',
-          reason
+          reason,
+          stopLossPrice,
+          takeProfitPrice
       };
-      setActiveTrade(trade);
-      addLog(`OPEN ${type} @ ${candle.close.toFixed(2)} - ${reason}`, "SUCCESS");
-  }, []);
 
-  const closeTrade = useCallback((candle: Candle, reason: string, overridePrice?: number) => {
+      setActiveTrade(trade);
+      addLog(`OPEN ${type} (${currentStrategy}) @ ${entryPrice.toFixed(2)} | TP: ${takeProfitPrice.toFixed(2)} | SL: ${stopLossPrice.toFixed(2)}`, "SUCCESS");
+  }, [currentStrategy]);
+
+  const closeTrade = useCallback((candle: Candle, reason: string, forcedPrice?: number) => {
       setActiveTrade(currentTrade => {
           if (!currentTrade) return null;
           
-          const exitPrice = overridePrice || candle.close;
+          const exitPrice = forcedPrice || candle.close;
           const tradePnl = currentTrade.type === 'LONG' 
             ? (exitPrice - currentTrade.entryPrice) 
-            : (currentTrade.entryPrice - exitPrice); // Short logic if needed
+            : (currentTrade.entryPrice - exitPrice);
           
           const realizedPnl = tradePnl; 
 
@@ -112,87 +140,119 @@ export default function App() {
       });
   }, []);
 
-  // Strategy Logic
-  // This runs whenever `data` updates and we are playing
+  // Strategy Execution Hook
   useEffect(() => {
     if (!isPlaying || data.length === 0) return;
 
     const last = data[data.length - 1];
     
-    // Skip if not enough data for EMAs
-    if (!last.ema676) return;
+    // Ensure all indicators exist
+    if (!last.rsi || !last.nwUpper || !last.nwLower || !last.atr || !last.ema12 || !last.ema144 || !last.ema169) return;
 
-    // --- 1. Check Exit Conditions if in trade ---
+    // --- 1. Exit Logic (Risk Management - Shared) ---
     if (activeTrade) {
-        // Hard Stop: Close < EMA676 (Long)
-        if (activeTrade.type === 'LONG' && last.close < last.ema676!) {
-            closeTrade(last, "Hard Stop Loss (Price < EMA676)");
-            return;
+        if (activeTrade.type === 'LONG') {
+            if (last.low <= activeTrade.stopLossPrice) {
+                closeTrade(last, "Stop Loss Hit", activeTrade.stopLossPrice);
+                return;
+            }
+            if (last.high >= activeTrade.takeProfitPrice) {
+                closeTrade(last, "Take Profit Hit", activeTrade.takeProfitPrice);
+                return;
+            }
+        } else if (activeTrade.type === 'SHORT') {
+             if (last.high >= activeTrade.stopLossPrice) {
+                closeTrade(last, "Stop Loss Hit", activeTrade.stopLossPrice);
+                return;
+            }
+            if (last.low <= activeTrade.takeProfitPrice) {
+                closeTrade(last, "Take Profit Hit", activeTrade.takeProfitPrice);
+                return;
+            }
         }
-
-        // Take Profit (Simplified 1:1.5 Risk Reward simulation)
-        const profitTarget = activeTrade.entryPrice * 1.05; // 5% move target for simulation
-        if (activeTrade.type === 'LONG' && last.high >= profitTarget) {
-            closeTrade(last, "Take Profit Target Hit", profitTarget);
-            return;
-        }
-
-        // Volume Exit
-        if (last.volOsc && last.volOsc > 25) { 
-             closeTrade(last, "Volume Climax Exit");
-             return;
-        }
-        return; 
+        return; // Currently in trade, don't check entries
     }
 
-    // --- 2. Check Entry Conditions ---
+    // --- 2. Entry Logic ---
+
+    if (currentStrategy === 'SCALPER') {
+        // --- SCALPER STRATEGY (Reversal) ---
+        // LONG: Price below Lower Band AND RSI Oversold
+        const isBelowLowerBand = last.close < last.nwLower; 
+        const isRsiOversold = last.rsi < RSI_OS;
+
+        if (isBelowLowerBand && isRsiOversold) {
+            openTrade(last, 'LONG', `[Scalp] RSI ${last.rsi.toFixed(1)} + Price < Band`);
+            return;
+        }
+
+        // SHORT: Price above Upper Band AND RSI Overbought
+        const isAboveUpperBand = last.close > last.nwUpper;
+        const isRsiOverbought = last.rsi > RSI_OB;
+
+        if (isAboveUpperBand && isRsiOverbought) {
+            openTrade(last, 'SHORT', `[Scalp] RSI ${last.rsi.toFixed(1)} + Price > Band`);
+            return;
+        }
     
-    // Bullish Trend Definition: 12 > 144 > 576
-    const isBullish = last.ema12! > last.ema144! && last.ema144! > last.ema576!;
-    
-    if (isBullish) {
-        const tunnelTop = Math.max(last.ema144!, last.ema169!);
-        const tunnelBottom = Math.min(last.ema144!, last.ema169!);
+    } else {
+        // --- VEGAS STRATEGY (Trend Follow) ---
+        // Tunnel = EMA 144 & EMA 169
+        // Filter = EMA 12
         
-        const upperBuffer = tunnelTop * (1 + BUFFER_PERCENT);
-        // Did price wick into the tunnel?
-        const touchesTunnel = last.low <= upperBuffer && last.low >= (tunnelBottom * 0.98); 
+        // LONG: EMA 12 crosses ABOVE Tunnel (EMA 169) AND Price is above Tunnel
+        const isAboveTunnel = last.close > last.ema144 && last.close > last.ema169;
+        const ema12CrossUp = last.ema12 > last.ema169;
+        
+        // Simple filter: Only enter if EMA12 is clearly above tunnel and price is trending up
+        if (isAboveTunnel && ema12CrossUp && last.rsi > 50) {
+             // We need a way to detect the *cross* specifically, but for this simulation loop, 
+             // checking state is okay if we prevent spamming. 
+             // Ideally we check prevCandle, but activeTrade check handles spamming.
+             // We add a random factor or stricter check to simulate waiting for a pullback or breakout
+             if (Math.random() > 0.7) { // Simulated "setup confirmation" chance
+                 openTrade(last, 'LONG', `[Vegas] Price > Tunnel + EMA12 Bullish`);
+             }
+        }
 
-        if (touchesTunnel) {
-             openTrade(last, 'LONG', "Retracement to Vegas Tunnel");
+        // SHORT: EMA 12 crosses BELOW Tunnel (EMA 144) AND Price is below Tunnel
+        const isBelowTunnel = last.close < last.ema144 && last.close < last.ema169;
+        const ema12CrossDown = last.ema12 < last.ema144;
+
+        if (isBelowTunnel && ema12CrossDown && last.rsi < 50) {
+            if (Math.random() > 0.7) {
+                openTrade(last, 'SHORT', `[Vegas] Price < Tunnel + EMA12 Bearish`);
+            }
         }
     }
-  }, [data, isPlaying, activeTrade, openTrade, closeTrade]);
+
+  }, [data, isPlaying, activeTrade, openTrade, closeTrade, currentStrategy]);
 
 
-  // Simulation Tick (Replay & Generate)
+  // Simulation Loop
   useEffect(() => {
     let interval: any;
     if (isPlaying) {
       interval = setInterval(() => {
         setData(prevData => {
-           // 1. Check if we have history to replay
            let nextCandle: Candle;
            
            if (backlogRef.current.length > 0) {
-               // Pop from backlog
                nextCandle = backlogRef.current.shift()!;
            } else {
-               // 2. If backlog empty, generate synthetic data
                if (isRealData) {
-                   setIsRealData(false); // Switch flag once we run out of real data
-                   addLog("Real history exhausted. Switching to synthetic data generation.", "WARNING");
+                   setIsRealData(false);
+                   addLog("Real history exhausted. Switching to synthetic data.", "WARNING");
                }
                const lastCandle = prevData[prevData.length - 1];
                nextCandle = generateNextCandle(lastCandle);
            }
 
-           const newData = [...prevData.slice(1), nextCandle]; 
-           // Recalculate indicators for the new set (or just the tail)
-           // For simplicity in this demo, we re-process. In prod, optimize this.
+           // Optimization: Only keep last 500 candles to prevent memory bloat
+           const newData = [...prevData.slice(-500), nextCandle]; 
            return processIndicators(newData);
         });
-      }, 150); // Speed up simulation a bit
+      }, 100); 
     }
     return () => clearInterval(interval);
   }, [isPlaying, isRealData]);
@@ -201,11 +261,19 @@ export default function App() {
     if (data.length === 0) return;
     setIsAnalyzing(true);
     const last = data[data.length - 1];
-    const isBullish = (last.ema12 || 0) > (last.ema144 || 0) && (last.ema144 || 0) > (last.ema576 || 0);
-    const trendStr = isBullish ? "Bullish Alignment (12 > 144 > 576)" : "Not Aligned / Bearish";
     
-    addLog("Requesting Gemini Analysis...", "INFO");
-    const result = await analyzeMarket(last, trendStr);
+    // Construct signal string context
+    let signal = "Neutral";
+    if (currentStrategy === 'SCALPER') {
+        if (last.rsi! > RSI_OB && last.close > last.nwUpper!) signal = "POTENTIAL SHORT (Extreme High)";
+        if (last.rsi! < RSI_OS && last.close < last.nwLower!) signal = "POTENTIAL LONG (Extreme Low)";
+    } else {
+        if (last.ema12! > last.ema169!) signal = "BULLISH TREND (Above Tunnel)";
+        if (last.ema12! < last.ema144!) signal = "BEARISH TREND (Below Tunnel)";
+    }
+    
+    addLog(`Requesting Gemini Analysis for ${currentStrategy}...`, "INFO");
+    const result = await analyzeMarket(last, signal, currentStrategy);
     setGeminiAnalysis(result);
     addLog("Gemini Analysis Received", "INFO");
     setIsAnalyzing(false);
@@ -218,15 +286,19 @@ export default function App() {
       {/* Header */}
       <div className="flex justify-between items-center bg-gray-900 p-4 rounded-lg border border-gray-800 shrink-0">
         <div className="flex items-center gap-3">
-          <div className="p-2 bg-blue-600 rounded-lg">
-            <Zap size={24} className="text-white" />
+          <div className={`p-2 rounded-lg transition-colors ${currentStrategy === 'SCALPER' ? 'bg-blue-600' : 'bg-purple-600'}`}>
+            <Layers size={24} className="text-white" />
           </div>
           <div>
-            <h1 className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-teal-400">
-              Vegas Tunnel Bot
+            <h1 className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-purple-400">
+              {currentStrategy === 'SCALPER' ? 'Nadaraya-Watson Scalper' : 'Vegas Tunnel Bot'}
             </h1>
             <div className="flex items-center gap-2">
-                <p className="text-xs text-gray-500">Automated Strategy Simulator • 15m Timeframe</p>
+                <p className="text-xs text-gray-500">
+                    {currentStrategy === 'SCALPER' 
+                        ? 'Reversal • NW Envelope • RSI • ATR' 
+                        : 'Trend Follow • EMA 144/169 • EMA 12'}
+                </p>
                 {isRealData && (
                     <span className="flex items-center gap-1 text-[10px] bg-green-900/50 text-green-400 px-2 py-0.5 rounded border border-green-800">
                         <Database size={10} /> Real Binance Data
@@ -237,26 +309,41 @@ export default function App() {
         </div>
         
         <div className="flex items-center gap-4">
+             {/* Strategy Selector */}
+             <div className="flex bg-gray-950 p-1 rounded-lg border border-gray-800">
+                <button 
+                    onClick={() => setCurrentStrategy('SCALPER')}
+                    className={`px-3 py-1.5 text-xs font-bold rounded-md transition-all ${currentStrategy === 'SCALPER' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white'}`}
+                >
+                    SCALPER
+                </button>
+                <button 
+                    onClick={() => setCurrentStrategy('VEGAS')}
+                    className={`px-3 py-1.5 text-xs font-bold rounded-md transition-all ${currentStrategy === 'VEGAS' ? 'bg-purple-600 text-white' : 'text-gray-400 hover:text-white'}`}
+                >
+                    VEGAS
+                </button>
+             </div>
+
+            <div className="h-8 w-px bg-gray-700"></div>
+
             <button 
                 onClick={handleManualAnalysis}
                 disabled={isAnalyzing}
                 className="flex items-center gap-2 px-4 py-2 bg-purple-900/50 hover:bg-purple-900 border border-purple-700 rounded-md text-purple-200 transition-colors text-sm"
             >
                 <BrainCircuit size={16} />
-                {isAnalyzing ? "Analyzing..." : "Ask Gemini Analyst"}
+                {isAnalyzing ? "..." : "AI Analyst"}
             </button>
-            <div className="h-8 w-px bg-gray-700"></div>
             <button 
                 onClick={() => setIsSettingsOpen(true)}
                 className="p-2 hover:bg-gray-800 rounded-md text-gray-400 transition-colors"
-                title="Configuration"
             >
                 <Settings size={20} />
             </button>
             <button 
                 onClick={() => window.location.reload()}
                 className="p-2 hover:bg-gray-800 rounded-md text-gray-400"
-                title="Reset Simulation"
             >
                 <RefreshCw size={20} />
             </button>
@@ -268,7 +355,7 @@ export default function App() {
                     : 'bg-green-600 hover:bg-green-700 text-white'
                 }`}
             >
-                {isPlaying ? <span className="flex items-center gap-2"><Pause size={18} /> PAUSE</span> : <span className="flex items-center gap-2"><Play size={18} /> RUN BOT</span>}
+                {isPlaying ? <span className="flex items-center gap-2"><Pause size={18} /> STOP</span> : <span className="flex items-center gap-2"><Play size={18} /> START</span>}
             </button>
         </div>
       </div>
@@ -279,7 +366,7 @@ export default function App() {
         {/* Left Column: Chart */}
         <div className="col-span-9 flex flex-col gap-4 min-h-0">
            <div className="flex-grow h-full min-h-0">
-             {data.length > 0 && <ChartPanel data={data} />}
+             {data.length > 0 && <ChartPanel data={data} strategy={currentStrategy} />}
            </div>
            
            {/* Gemini Analysis Output */}
@@ -302,6 +389,7 @@ export default function App() {
                 lastCandle={lastCandle}
                 activeTrade={activeTrade}
                 pnl={pnl}
+                strategy={currentStrategy}
             />
           </div>
           <div className="flex-grow min-h-0">

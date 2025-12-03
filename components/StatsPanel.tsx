@@ -1,17 +1,32 @@
+
 import React from 'react';
-import { BotStatus, Trade, Candle } from '../types';
-import { TrendingUp, TrendingDown, Activity, DollarSign, Clock } from 'lucide-react';
+import { BotStatus, Trade, Candle, Strategy } from '../types';
+import { Activity, DollarSign, Clock, Zap, BarChart2 } from 'lucide-react';
 
 interface StatsPanelProps {
   status: BotStatus;
   lastCandle: Candle;
   activeTrade: Trade | null;
   pnl: number;
+  strategy: Strategy;
 }
 
-const StatsPanel: React.FC<StatsPanelProps> = ({ status, lastCandle, activeTrade, pnl }) => {
-  const isBullish = (lastCandle.ema12 || 0) > (lastCandle.ema144 || 0) && (lastCandle.ema144 || 0) > (lastCandle.ema576 || 0);
-  const isBearish = (lastCandle.ema12 || 0) < (lastCandle.ema144 || 0) && (lastCandle.ema144 || 0) < (lastCandle.ema576 || 0);
+const StatsPanel: React.FC<StatsPanelProps> = ({ status, lastCandle, activeTrade, pnl, strategy }) => {
+  
+  // Scalper Variables
+  const rsi = lastCandle.rsi || 50;
+  const isOverbought = rsi > 70;
+  const isOversold = rsi < 30;
+  const isBelowBand = lastCandle.close < (lastCandle.nwLower || 0);
+  const isAboveBand = lastCandle.close > (lastCandle.nwUpper || 0);
+
+  // Vegas Variables
+  const price = lastCandle.close;
+  const ema12 = lastCandle.ema12 || 0;
+  const ema144 = lastCandle.ema144 || 0;
+  const ema169 = lastCandle.ema169 || 0;
+  const isAboveTunnel = price > ema144 && price > ema169;
+  const isBelowTunnel = price < ema144 && price < ema169;
 
   const getStatusColor = (s: BotStatus) => {
     switch (s) {
@@ -32,8 +47,22 @@ const StatsPanel: React.FC<StatsPanelProps> = ({ status, lastCandle, activeTrade
         <div className={`text-2xl font-bold ${getStatusColor(status)}`}>
           {status.replace('_', ' ')}
         </div>
-        <div className="mt-2 text-xs text-gray-500">
-           Last Price: <span className="text-gray-200">${lastCandle.close.toFixed(2)}</span>
+        <div className="mt-2 text-xs text-gray-500 flex justify-between">
+            {strategy === 'SCALPER' ? (
+                <>
+                   <span>RSI (14):</span>
+                   <span className={`font-mono font-bold ${isOverbought ? 'text-red-400' : isOversold ? 'text-green-400' : 'text-gray-200'}`}>
+                     {rsi.toFixed(1)}
+                   </span>
+                </>
+            ) : (
+                <>
+                   <span>Trend:</span>
+                   <span className={`font-mono font-bold ${isAboveTunnel ? 'text-green-400' : isBelowTunnel ? 'text-red-400' : 'text-gray-400'}`}>
+                     {isAboveTunnel ? 'BULL' : isBelowTunnel ? 'BEAR' : 'NEUTRAL'}
+                   </span>
+                </>
+            )}
         </div>
       </div>
 
@@ -47,28 +76,57 @@ const StatsPanel: React.FC<StatsPanelProps> = ({ status, lastCandle, activeTrade
           {pnl >= 0 ? '+' : ''}{pnl.toFixed(2)} USDT
         </div>
         <div className="mt-2 text-xs text-gray-500">
-          Risk per Trade: 1.0%
+          Risk: ATR {(lastCandle.atr || 0).toFixed(2)}
         </div>
       </div>
 
-      {/* Trend Card */}
+      {/* Signal Card */}
       <div className="bg-gray-900 border border-gray-800 rounded-lg p-4 flex flex-col justify-between">
          <div className="flex items-center gap-2 text-gray-400 mb-2">
-          {isBullish ? <TrendingUp size={16} /> : <TrendingDown size={16} />}
-          <span className="text-xs uppercase font-bold">Market Regime</span>
+          <Zap size={16} />
+          <span className="text-xs uppercase font-bold">{strategy === 'SCALPER' ? 'Reversal Logic' : 'Tunnel Logic'}</span>
         </div>
-        <div className="text-lg font-bold text-gray-200">
-            {isBullish ? "FULL BULLISH" : isBearish ? "FULL BEARISH" : "CHOPPY / RANGING"}
-        </div>
-        <div className="mt-1 text-xs text-gray-500">
-          Aligned: 12 {'>'} 144 {'>'} 576
+        <div className="flex flex-col gap-1">
+            {strategy === 'SCALPER' ? (
+                <>
+                    <div className={`text-xs flex justify-between ${isAboveBand ? 'text-red-400 font-bold' : 'text-gray-500'}`}>
+                        <span>Price {'>'} Top Band</span>
+                        <span>{isAboveBand ? 'YES' : 'NO'}</span>
+                    </div>
+                    <div className={`text-xs flex justify-between ${isBelowBand ? 'text-green-400 font-bold' : 'text-gray-500'}`}>
+                        <span>Price {'<'} Bot Band</span>
+                        <span>{isBelowBand ? 'YES' : 'NO'}</span>
+                    </div>
+                    <div className="h-px bg-gray-800 my-1"></div>
+                    <div className={`text-xs flex justify-between ${isOverbought ? 'text-red-400 font-bold' : isOversold ? 'text-green-400 font-bold' : 'text-gray-500'}`}>
+                        <span>RSI Extreme</span>
+                        <span>{isOverbought ? '>70' : isOversold ? '<30' : '-'}</span>
+                    </div>
+                </>
+            ) : (
+                <>
+                    <div className={`text-xs flex justify-between ${ema12 > ema169 ? 'text-green-400 font-bold' : 'text-gray-500'}`}>
+                        <span>EMA12 {'>'} Tunnel</span>
+                        <span>{ema12 > ema169 ? 'YES' : 'NO'}</span>
+                    </div>
+                    <div className={`text-xs flex justify-between ${ema12 < ema144 ? 'text-red-400 font-bold' : 'text-gray-500'}`}>
+                        <span>EMA12 {'<'} Tunnel</span>
+                        <span>{ema12 < ema144 ? 'YES' : 'NO'}</span>
+                    </div>
+                    <div className="h-px bg-gray-800 my-1"></div>
+                     <div className={`text-xs flex justify-between text-gray-500`}>
+                        <span>Vol Filter</span>
+                        <span>{(lastCandle.atr || 0) > 50 ? 'OK' : 'LOW'}</span>
+                    </div>
+                </>
+            )}
         </div>
       </div>
 
       {/* Active Position Card */}
       <div className="bg-gray-900 border border-gray-800 rounded-lg p-4 flex flex-col justify-between relative overflow-hidden">
         {activeTrade && (
-            <div className="absolute top-0 left-0 w-1 h-full bg-green-500 animate-pulse"></div>
+            <div className={`absolute top-0 left-0 w-1 h-full animate-pulse ${activeTrade.type === 'LONG' ? 'bg-green-500' : 'bg-red-500'}`}></div>
         )}
         <div className="flex items-center gap-2 text-gray-400 mb-2">
           <Clock size={16} />
@@ -76,12 +134,20 @@ const StatsPanel: React.FC<StatsPanelProps> = ({ status, lastCandle, activeTrade
         </div>
         {activeTrade ? (
             <div>
-                <div className="text-lg font-bold text-green-400">{activeTrade.type}</div>
-                <div className="text-xs text-gray-400">Entry: ${activeTrade.entryPrice.toFixed(2)}</div>
-                <div className="text-xs text-gray-400">Target: ${(activeTrade.entryPrice * 1.05).toFixed(2)}</div>
+                <div className={`text-lg font-bold ${activeTrade.type === 'LONG' ? 'text-green-400' : 'text-red-400'}`}>{activeTrade.type}</div>
+                <div className="grid grid-cols-2 gap-x-2 gap-y-1 mt-1">
+                    <div className="text-[10px] text-gray-400">Entry</div>
+                    <div className="text-[10px] text-right text-gray-200">{activeTrade.entryPrice.toFixed(2)}</div>
+                    
+                    <div className="text-[10px] text-gray-400">TP</div>
+                    <div className="text-[10px] text-right text-green-300">{activeTrade.takeProfitPrice.toFixed(2)}</div>
+                    
+                    <div className="text-[10px] text-gray-400">SL</div>
+                    <div className="text-[10px] text-right text-red-300">{activeTrade.stopLossPrice.toFixed(2)}</div>
+                </div>
             </div>
         ) : (
-            <div className="text-gray-600 italic">No active positions</div>
+            <div className="text-gray-600 italic text-sm mt-2">No active positions</div>
         )}
       </div>
     </div>

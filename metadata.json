@@ -1,5 +1,5 @@
 {
-  "name": "Vegas Tunnel Bot Simulator",
-  "description": "A comprehensive trading strategy simulator visualizing the Vegas Tunnel system with EMA ribbons and Volume Oscillators.",
+  "name": "Nadaraya-Watson Scalper Simulator",
+  "description": "A 5-minute scalping strategy simulator using Nadaraya-Watson Envelope, RSI Reversals, and ATR-based risk management.",
   "requestFramePermissions": []
 }

@@ -1,5 +1,6 @@
+
 import { GoogleGenAI } from "@google/genai";
-import { Candle } from "../types";
+import { Candle, Strategy } from "../types";
 
 // Safe initialization
 let ai: GoogleGenAI | null = null;
@@ -11,27 +12,42 @@ try {
   console.error("Failed to initialize Gemini client", e);
 }
 
-export const analyzeMarket = async (lastCandle: Candle, trend: string): Promise<string> => {
+export const analyzeMarket = async (lastCandle: Candle, trend: string, strategy: Strategy): Promise<string> => {
   if (!ai) return "API Key not configured. Please set process.env.API_KEY to use Gemini.";
 
-  const prompt = `
-    Act as a professional crypto quant trader using the Vegas Tunnel Strategy.
-    
-    Current Market Data (BTC/USDT 15m):
-    - Price: $${lastCandle.close.toFixed(2)}
-    - EMA 12: ${lastCandle.ema12?.toFixed(2)}
-    - EMA 144 (Tunnel Top): ${lastCandle.ema144?.toFixed(2)}
-    - EMA 169 (Tunnel Bottom): ${lastCandle.ema169?.toFixed(2)}
-    - EMA 576 (Trend Top): ${lastCandle.ema576?.toFixed(2)}
-    - EMA 676 (Trend Bottom): ${lastCandle.ema676?.toFixed(2)}
-    - Volume Oscillator: ${lastCandle.volOsc?.toFixed(2)}
+  let prompt = "";
 
-    Current System State: ${trend}
+  if (strategy === 'SCALPER') {
+      prompt = `
+        Act as a professional crypto quant scalper using a Nadaraya-Watson Envelope + RSI Reversal Strategy on 5m timeframe.
+        
+        Current Market Data (BTC/USDT 5m):
+        - Price: $${lastCandle.close.toFixed(2)}
+        - RSI (14): ${lastCandle.rsi?.toFixed(2)} (Oversold < 30, Overbought > 70)
+        - Nadaraya-Watson Upper: ${lastCandle.nwUpper?.toFixed(2)}
+        - Nadaraya-Watson Lower: ${lastCandle.nwLower?.toFixed(2)}
+        - ATR (Vol): ${lastCandle.atr?.toFixed(2)}
 
-    Please provide a concise 2-sentence analysis of the current setup. 
-    1. Is the trend strong or weak?
-    2. Are we in a potential entry zone (retracement to tunnel) or danger zone?
-  `;
+        Signal: ${trend}
+
+        Provide a concise 2-sentence analysis on whether a reversal is likely or if we should wait.
+      `;
+  } else {
+      prompt = `
+        Act as a professional crypto trader using the Vegas Tunnel Strategy (EMA 144 & 169) on 5m timeframe.
+        
+        Current Market Data (BTC/USDT 5m):
+        - Price: $${lastCandle.close.toFixed(2)}
+        - EMA 12 (Fast): ${lastCandle.ema12?.toFixed(2)}
+        - EMA 144 (Tunnel Top): ${lastCandle.ema144?.toFixed(2)}
+        - EMA 169 (Tunnel Bottom): ${lastCandle.ema169?.toFixed(2)}
+        - ATR (Vol): ${lastCandle.atr?.toFixed(2)}
+
+        Signal: ${trend}
+
+        Provide a concise 2-sentence analysis on trend direction and tunnel breakout strength.
+      `;
+  }
 
   try {
     const model = 'gemini-2.5-flash';

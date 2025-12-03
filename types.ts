@@ -1,3 +1,6 @@
+
+export type Strategy = 'SCALPER' | 'VEGAS';
+
 export interface Candle {
   time: number;
   open: number;
@@ -5,12 +8,16 @@ export interface Candle {
   low: number;
   close: number;
   volume: number;
+  // Scalper Indicators
+  rsi?: number;
+  atr?: number;
+  nwMid?: number;
+  nwUpper?: number;
+  nwLower?: number;
+  // Vegas Indicators
   ema12?: number;
   ema144?: number;
   ema169?: number;
-  ema576?: number;
-  ema676?: number;
-  volOsc?: number;
 }
 
 export interface Trade {
@@ -23,6 +30,9 @@ export interface Trade {
   status: 'OPEN' | 'CLOSED';
   pnl?: number;
   reason: string;
+  // Dynamic Risk Management
+  stopLossPrice: number;
+  takeProfitPrice: number;
 }
 
 export enum BotStatus {
@@ -34,10 +44,10 @@ export enum BotStatus {
 export interface StrategyConfig {
   symbol: string;
   timeframe: string;
-  riskPerTrade: number;
-  emaShort: number;
-  emaTunnel1: number;
-  emaTunnel2: number;
-  emaTrend1: number;
-  emaTrend2: number;
+  nwBandwidth: number;
+  nwMultiplier: number;
+  rsiPeriod: number;
+  atrPeriod: number;
+  atrSlMultiplier: number;
+  riskRewardRatio: number;
 }

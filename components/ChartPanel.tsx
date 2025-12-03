@@ -1,3 +1,4 @@
+
 import React from 'react';
 import {
   ComposedChart,
@@ -6,31 +7,47 @@ import {
   YAxis,
   CartesianGrid,
   Tooltip,
-  ResponsiveContainer,
+  ResponsiveContainer
 } from 'recharts';
 import { format } from 'date-fns';
-import { Candle } from '../types';
+import { Candle, Strategy } from '../types';
 
 interface ChartPanelProps {
   data: Candle[];
+  strategy: Strategy;
 }
 
-const ChartPanel: React.FC<ChartPanelProps> = ({ data }) => {
+const ChartPanel: React.FC<ChartPanelProps> = ({ data, strategy }) => {
   // We take the last 150 candles for performance and visibility
   const visibleData = data.slice(-150);
   
   const minPrice = visibleData.length > 0 ? Math.min(...visibleData.map(d => d.low)) : 0;
   const maxPrice = visibleData.length > 0 ? Math.max(...visibleData.map(d => d.high)) : 100;
-  const domain = [minPrice - (minPrice * 0.005), maxPrice + (maxPrice * 0.005)];
+  const padding = (maxPrice - minPrice) * 0.1;
+  const domain = [minPrice - padding, maxPrice + padding];
 
   return (
     <div className="w-full h-full bg-gray-900 rounded-lg p-4 border border-gray-800 flex flex-col">
       <div className="flex justify-between items-center mb-2">
-        <h2 className="text-gray-300 text-sm font-semibold uppercase tracking-wider">BTC/USDT 15m • Vegas Tunnel</h2>
+        <h2 className="text-gray-300 text-sm font-semibold uppercase tracking-wider flex items-center gap-2">
+            BTC/USDT 5m • 
+            <span className={strategy === 'SCALPER' ? 'text-blue-400' : 'text-purple-400'}>
+                {strategy === 'SCALPER' ? 'NW Envelope + RSI' : 'Vegas Tunnel'}
+            </span>
+        </h2>
         <div className="flex gap-4 text-xs">
-          <div className="flex items-center gap-1"><span className="w-3 h-3 bg-yellow-400 rounded-full"></span> EMA 12</div>
-          <div className="flex items-center gap-1"><span className="w-3 h-3 bg-teal-300 rounded-full"></span> Tunnel (144/169)</div>
-          <div className="flex items-center gap-1"><span className="w-3 h-3 bg-red-500 rounded-full"></span> Trend (576/676)</div>
+          {strategy === 'SCALPER' ? (
+              <>
+                <div className="flex items-center gap-1"><span className="w-3 h-3 bg-red-500/50 rounded-full"></span> Top Band</div>
+                <div className="flex items-center gap-1"><span className="w-3 h-3 bg-blue-500 rounded-full"></span> Midline</div>
+                <div className="flex items-center gap-1"><span className="w-3 h-3 bg-green-500/50 rounded-full"></span> Bot Band</div>
+              </>
+          ) : (
+              <>
+                <div className="flex items-center gap-1"><span className="w-3 h-3 bg-yellow-500 rounded-full"></span> EMA 12</div>
+                <div className="flex items-center gap-1"><span className="w-3 h-3 bg-purple-500 rounded-full"></span> Tunnel (144/169)</div>
+              </>
+          )}
         </div>
       </div>
       
@@ -61,22 +78,29 @@ const ChartPanel: React.FC<ChartPanelProps> = ({ data }) => {
                       return format(new Date(label), 'MMM dd HH:mm');
                   } catch (e) { return ''; }
               }}
-              formatter={(value: any) => [String(Number(value).toFixed(2)), "Price"]}
+              formatter={(value: any, name: string) => [Number(value).toFixed(2), name === 'close' ? 'Price' : name]}
             />
             
-            {/* Price Line (Close) - keeping it simple vs Candle bars for cleaner EMA visibility */}
-            <Line type="monotone" dataKey="close" stroke="#cbd5e0" dot={false} strokeWidth={1} isAnimationActive={false} />
+            {/* Price Line */}
+            <Line type="monotone" dataKey="close" stroke="#cbd5e0" dot={false} strokeWidth={2} isAnimationActive={false} />
 
-            {/* EMA Group A: Vegas Tunnel */}
-            <Line type="monotone" dataKey="ema144" stroke="#4fd1c5" dot={false} strokeWidth={2} strokeOpacity={0.8} isAnimationActive={false} />
-            <Line type="monotone" dataKey="ema169" stroke="#4fd1c5" dot={false} strokeWidth={2} strokeOpacity={0.8} isAnimationActive={false} />
+            {/* Scalper Lines */}
+            {strategy === 'SCALPER' && (
+                <>
+                    <Line type="basis" dataKey="nwUpper" stroke="#ef4444" strokeDasharray="5 5" dot={false} strokeWidth={2} isAnimationActive={false} />
+                    <Line type="basis" dataKey="nwMid" stroke="#3b82f6" dot={false} strokeWidth={1} strokeOpacity={0.5} isAnimationActive={false} />
+                    <Line type="basis" dataKey="nwLower" stroke="#22c55e" strokeDasharray="5 5" dot={false} strokeWidth={2} isAnimationActive={false} />
+                </>
+            )}
 
-            {/* EMA Group B: Long Term Trend */}
-            <Line type="monotone" dataKey="ema576" stroke="#f56565" dot={false} strokeWidth={2} strokeOpacity={0.6} isAnimationActive={false} />
-            <Line type="monotone" dataKey="ema676" stroke="#f56565" dot={false} strokeWidth={2} strokeOpacity={0.6} isAnimationActive={false} />
-
-            {/* EMA Group C: Short Term */}
-            <Line type="monotone" dataKey="ema12" stroke="#ecc94b" dot={false} strokeWidth={1.5} isAnimationActive={false} />
+            {/* Vegas Lines */}
+            {strategy === 'VEGAS' && (
+                <>
+                    <Line type="monotone" dataKey="ema12" stroke="#eab308" dot={false} strokeWidth={2} isAnimationActive={false} />
+                    <Line type="monotone" dataKey="ema144" stroke="#a855f7" strokeDasharray="3 3" dot={false} strokeWidth={2} isAnimationActive={false} />
+                    <Line type="monotone" dataKey="ema169" stroke="#c084fc" strokeDasharray="3 3" dot={false} strokeWidth={2} isAnimationActive={false} />
+                </>
+            )}
             
           </ComposedChart>
         </ResponsiveContainer>
