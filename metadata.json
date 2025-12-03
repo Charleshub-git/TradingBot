@@ -1,0 +1,5 @@
+{
+  "name": "Vegas Tunnel Bot Simulator",
+  "description": "A comprehensive trading strategy simulator visualizing the Vegas Tunnel system with EMA ribbons and Volume Oscillators.",
+  "requestFramePermissions": []
+}
