@@ -1,5 +1,6 @@
 
 export type Strategy = 'SCALPER' | 'VEGAS';
+export type DataSource = 'BINANCE' | 'ALPACA' | 'FMP' | 'CSV';
 
 export interface Candle {
   time: number;

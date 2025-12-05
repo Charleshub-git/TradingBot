@@ -22,7 +22,12 @@ export const calculateRSI = (data: Candle[], period: number = 14): number[] => {
   let avgGain = gains / period;
   let avgLoss = losses / period;
 
-  rsiArray[period] = 100 - (100 / (1 + (avgGain / (avgLoss === 0 ? 1 : avgLoss))));
+  // Handle division by zero
+  if (avgLoss === 0) {
+      rsiArray[period] = 100; 
+  } else {
+      rsiArray[period] = 100 - (100 / (1 + (avgGain / avgLoss)));
+  }
 
   // Smoothed averages
   for (let i = period + 1; i < data.length; i++) {
@@ -62,7 +67,12 @@ export const calculateEMA = (data: Candle[], period: number): number[] => {
 
     // Calculate EMAs
     for (let i = period; i < data.length; i++) {
-        emaArray[i] = (data[i].close * k) + (emaArray[i - 1] * (1 - k));
+        const prevEma = emaArray[i - 1];
+        if (isNaN(prevEma)) {
+            emaArray[i] = data[i].close;
+        } else {
+            emaArray[i] = (data[i].close * k) + (prevEma * (1 - k));
+        }
     }
 
     return emaArray;
@@ -134,13 +144,15 @@ export const calculateNadarayaWatson = (data: Candle[], bandwidth: number = 50, 
     
     for (let j = startJ; j <= i; j++) {
       const distance = i - j;
+      // Protect against NaN/Infinite weights
       const weight = Math.exp(-(distance * distance) / (2 * bandwidth * bandwidth));
       
       sumWeights += weight;
       sumWeightedClose += data[j].close * weight;
     }
 
-    const yHat = sumWeightedClose / sumWeights;
+    // Safety against division by zero
+    const yHat = sumWeights > 0 ? (sumWeightedClose / sumWeights) : data[i].close;
     mid[i] = yHat;
 
     for (let j = startJ; j <= i; j++) {
@@ -149,7 +161,7 @@ export const calculateNadarayaWatson = (data: Candle[], bandwidth: number = 50, 
         sumWeightedDiff += weight * Math.abs(data[j].close - yHat);
     }
     
-    const mae = sumWeightedDiff / sumWeights;
+    const mae = sumWeights > 0 ? (sumWeightedDiff / sumWeights) : 0;
     upper[i] = yHat + (multiplier * mae);
     lower[i] = yHat - (multiplier * mae);
   }
@@ -172,23 +184,35 @@ export const processIndicators = (candles: Candle[]): Candle[] => {
     const EMA_TUNNEL_1 = 144;
     const EMA_TUNNEL_2 = 169;
 
-    const rsi = calculateRSI(candles, RSI_PERIOD);
-    const atr = calculateATR(candles, ATR_PERIOD);
-    const nw = calculateNadarayaWatson(candles, NW_BANDWIDTH, NW_MULT);
+    // Ensure candles is an array and has valid data
+    if (!Array.isArray(candles) || candles.length === 0) return [];
     
-    const ema12 = calculateEMA(candles, EMA_FAST);
-    const ema144 = calculateEMA(candles, EMA_TUNNEL_1);
-    const ema169 = calculateEMA(candles, EMA_TUNNEL_2);
-
-    return candles.map((c, i) => ({
+    // Pre-process to ensure no NaNs in core OHLC (simple fix if needed, though dataGenerator ensures this)
+    const safeCandles = candles.map(c => ({
         ...c,
-        rsi: rsi[i],
-        atr: atr[i],
-        nwMid: nw.mid[i],
-        nwUpper: nw.upper[i],
-        nwLower: nw.lower[i],
-        ema12: ema12[i],
-        ema144: ema144[i],
-        ema169: ema169[i],
+        open: isNaN(c.open) ? 0 : c.open,
+        high: isNaN(c.high) ? 0 : c.high,
+        low: isNaN(c.low) ? 0 : c.low,
+        close: isNaN(c.close) ? 0 : c.close,
+    }));
+
+    const rsi = calculateRSI(safeCandles, RSI_PERIOD);
+    const atr = calculateATR(safeCandles, ATR_PERIOD);
+    const nw = calculateNadarayaWatson(safeCandles, NW_BANDWIDTH, NW_MULT);
+    
+    const ema12 = calculateEMA(safeCandles, EMA_FAST);
+    const ema144 = calculateEMA(safeCandles, EMA_TUNNEL_1);
+    const ema169 = calculateEMA(safeCandles, EMA_TUNNEL_2);
+
+    return safeCandles.map((c, i) => ({
+        ...c,
+        rsi: rsi[i] || 50, // Default to mid if NaN
+        atr: atr[i] || 0,
+        nwMid: nw.mid[i] || c.close,
+        nwUpper: nw.upper[i] || c.close,
+        nwLower: nw.lower[i] || c.close,
+        ema12: ema12[i] || c.close,
+        ema144: ema144[i] || c.close,
+        ema169: ema169[i] || c.close,
     }));
 };
