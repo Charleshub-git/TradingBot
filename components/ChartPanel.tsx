@@ -269,60 +269,68 @@ const ChartPanel: React.FC<ChartPanelProps> = ({ data, strategy, isPlaying }) =>
 
 
   return (
-    <div className="w-full h-full bg-[#ebf0f5] rounded-lg p-1 border border-gray-300 flex flex-col shadow-inner relative">
-      <div className="absolute top-3 left-4 z-10 flex flex-col gap-1 pointer-events-none">
-        <h2 className="text-gray-800 text-sm font-bold uppercase tracking-wider flex items-center gap-2 drop-shadow-md">
-            BTC/USDT 5m • 
-            <span className={strategy === 'SCALPER' ? 'text-cyan-700' : 'text-purple-700'}>
-                {strategy === 'SCALPER' ? 'NW Envelope + RSI' : 'Vegas Tunnel'}
-            </span>
-        </h2>
-        {legendData && (
-            <div className="flex gap-3 text-xs font-mono bg-white/80 backdrop-blur-sm p-1 rounded shadow-sm border border-gray-200">
-                <span className="text-gray-500 font-bold">{formatTime(legendData.time)}</span>
-                <span className="text-gray-800">O: <span className="font-semibold">{legendData.open?.toFixed(2)}</span></span>
-                <span className="text-gray-800">H: <span className="font-semibold">{legendData.high?.toFixed(2)}</span></span>
-                <span className="text-gray-800">L: <span className="font-semibold">{legendData.low?.toFixed(2)}</span></span>
-                <span className="text-gray-800">C: <span className="font-semibold" style={{ color: legendData.close >= legendData.open ? '#15803d' : '#b91c1c' }}>{legendData.close?.toFixed(2)}</span></span>
-            </div>
-        )}
-      </div>
+    <div className="w-full h-full bg-[#ebf0f5] rounded-lg border border-gray-300 flex flex-col shadow-inner overflow-hidden">
+      {/* Header Bar - Moved from absolute position to prevent obscuring chart data */}
+      <div className="flex justify-between items-start p-2 border-b border-gray-300 bg-white/50 shrink-0 gap-4">
+        {/* Left Side: Title & Legend */}
+        <div className="flex flex-col gap-1 min-w-0">
+             <h2 className="text-gray-800 text-sm font-bold uppercase tracking-wider flex items-center gap-2">
+                BTC/USDT 5m • 
+                <span className={strategy === 'SCALPER' ? 'text-cyan-700' : 'text-purple-700'}>
+                    {strategy === 'SCALPER' ? 'NW Envelope + RSI' : 'Vegas Tunnel'}
+                </span>
+            </h2>
+             {legendData ? (
+                <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs font-mono text-gray-600">
+                    <span className="font-bold">{formatTime(legendData.time)}</span>
+                    <span>O: <span className="font-semibold text-gray-900">{legendData.open?.toFixed(2)}</span></span>
+                    <span>H: <span className="font-semibold text-gray-900">{legendData.high?.toFixed(2)}</span></span>
+                    <span>L: <span className="font-semibold text-gray-900">{legendData.low?.toFixed(2)}</span></span>
+                    <span>C: <span className={`font-bold ${legendData.close >= legendData.open ? 'text-green-600' : 'text-red-600'}`}>{legendData.close?.toFixed(2)}</span></span>
+                </div>
+             ) : (
+                 <div className="text-xs text-gray-400 font-mono h-4">Hover chart for details</div>
+             )}
+        </div>
 
-      <div className="absolute top-3 right-4 z-10 flex items-center gap-4 pointer-events-none">
-          <div className="pointer-events-auto"> 
-            <button
+        {/* Right Side: Controls */}
+        <div className="flex flex-col items-end gap-2 shrink-0">
+             <button
                 onClick={() => setShowIndicators(!showIndicators)}
-                className={`flex items-center gap-2 px-3 py-1.5 rounded border text-xs font-bold transition-all shadow-sm cursor-pointer ${
+                className={`flex items-center gap-2 px-2 py-1 rounded border text-xs font-bold transition-all shadow-sm cursor-pointer ${
                     showIndicators 
                     ? 'bg-blue-100 border-blue-300 text-blue-700' 
                     : 'bg-white border-gray-300 text-gray-600 hover:bg-gray-50'
                 }`}
             >
-                {showIndicators ? <EyeOff size={14} /> : <Eye size={14} />}
-                <span>{showIndicators ? 'Hide Indicators' : 'Show Indicators'}</span>
+                {showIndicators ? <EyeOff size={12} /> : <Eye size={12} />}
+                <span>{showIndicators ? 'Hide' : 'Show'}</span>
             </button>
-          </div>
-
-          {showIndicators && (
-            <div className="flex gap-4 text-xs font-semibold text-gray-700 animate-in fade-in slide-in-from-right-4 duration-300 bg-white/80 backdrop-blur-sm px-2 py-1.5 rounded border border-gray-200 pointer-events-auto">
-              {strategy === 'SCALPER' ? (
-                  <>
-                    <div className="flex items-center gap-1"><span className="w-3 h-1 bg-cyan-400"></span> Top</div>
-                    <div className="flex items-center gap-1"><span className="w-3 h-1 bg-yellow-400"></span> Mid</div>
-                    <div className="flex items-center gap-1"><span className="w-3 h-1 bg-magenta-500" style={{backgroundColor: '#d946ef'}}></span> Bot</div>
-                  </>
-              ) : (
-                  <>
-                    <div className="flex items-center gap-1"><span className="w-3 h-1 bg-yellow-400"></span> EMA12</div>
-                    <div className="flex items-center gap-1"><span className="w-3 h-1 bg-cyan-400"></span> Top</div>
-                    <div className="flex items-center gap-1"><span className="w-3 h-1 bg-magenta-500" style={{backgroundColor: '#d946ef'}}></span> Bot</div>
-                  </>
-              )}
-            </div>
-          )}
+            
+            {showIndicators && (
+               <div className="flex gap-2 text-[10px] font-semibold text-gray-600 bg-white/50 px-1.5 py-0.5 rounded border border-gray-200">
+                  {strategy === 'SCALPER' ? (
+                      <>
+                        <div className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-cyan-400"></span> Top</div>
+                        <div className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-yellow-400"></span> Mid</div>
+                        <div className="flex items-center gap-1"><span className="w-2 h-2 rounded-full" style={{backgroundColor: '#d946ef'}}></span> Bot</div>
+                      </>
+                  ) : (
+                      <>
+                        <div className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-yellow-400"></span> EMA12</div>
+                        <div className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-cyan-400"></span> Top</div>
+                        <div className="flex items-center gap-1"><span className="w-2 h-2 rounded-full" style={{backgroundColor: '#d946ef'}}></span> Bot</div>
+                      </>
+                  )}
+               </div>
+            )}
+        </div>
       </div>
       
-      <div ref={chartContainerRef} className="w-full h-full rounded overflow-hidden" />
+      {/* Chart Canvas Area */}
+      <div className="flex-grow relative w-full min-h-0">
+          <div ref={chartContainerRef} className="absolute inset-0" />
+      </div>
     </div>
   );
 };

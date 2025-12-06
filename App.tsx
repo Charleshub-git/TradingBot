@@ -652,6 +652,7 @@ export default function App() {
       
       {/* Content Area */}
       <div className="flex-grow flex gap-4 min-h-0 overflow-hidden">
+        {/* Left Column: Chart */}
         <div className="flex-grow h-full flex flex-col gap-4">
            {/* Chart */}
            <div className="flex-grow min-h-0">
@@ -661,9 +662,12 @@ export default function App() {
                     isPlaying={isPlaying} 
                 />
            </div>
-           
-           {/* Stats */}
-           <div className="h-32 shrink-0">
+        </div>
+
+        {/* Right Sidebar - Stats and Logs */}
+        <div className="w-96 shrink-0 h-full flex flex-col gap-4">
+            {/* Stats */}
+            <div className="shrink-0">
                <StatsPanel 
                 status={appMode === 'LIVE' ? (activeTrade ? BotStatus.IN_POSITION : BotStatus.SCANNING) : BotStatus.IDLE} 
                 lastCandle={lastCandle} 
@@ -671,12 +675,11 @@ export default function App() {
                 pnl={pnl}
                 strategy={currentStrategy}
                />
-           </div>
-        </div>
-
-        {/* Right Sidebar - Logs */}
-        <div className="w-80 shrink-0 h-full">
-            <LogPanel logs={logs} />
+            </div>
+            {/* Logs */}
+            <div className="flex-grow min-h-0">
+                <LogPanel logs={logs} />
+            </div>
         </div>
       </div>
 
