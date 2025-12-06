@@ -1,4 +1,5 @@
 
+
 import { Candle } from '../types';
 
 /**
@@ -215,4 +216,69 @@ export const processIndicators = (candles: Candle[]): Candle[] => {
         ema144: ema144[i] || c.close,
         ema169: ema169[i] || c.close,
     }));
+};
+
+/**
+ * Incrementally updates the indicators for a single new candle.
+ * This is significantly faster than processIndicators for large datasets
+ * as it avoids recalculating the entire history.
+ */
+export const updateLastCandle = (prevData: Candle[], newCandle: Candle): Candle => {
+    // If no history, just return processed single candle (will be unstable but safe)
+    if (prevData.length === 0) {
+        return processIndicators([newCandle])[0];
+    }
+
+    const lastKnown = prevData[prevData.length - 1];
+
+    // 1. EMA (Incremental - Perfect Precision)
+    const calcEma = (prev: number | undefined, close: number, period: number) => {
+        // If prev is missing, fallback to close (approximation for start)
+        if (prev === undefined || isNaN(prev)) return close; 
+        const k = 2 / (period + 1);
+        return (close * k) + (prev * (1 - k));
+    };
+    
+    const ema12 = calcEma(lastKnown.ema12, newCandle.close, 12);
+    const ema144 = calcEma(lastKnown.ema144, newCandle.close, 144);
+    const ema169 = calcEma(lastKnown.ema169, newCandle.close, 169);
+
+    // 2. ATR (Incremental - Perfect Precision)
+    const calcAtr = (prevAtr: number | undefined, current: Candle, prevClose: number, period: number) => {
+         const tr = Math.max(
+            current.high - current.low,
+            Math.abs(current.high - prevClose),
+            Math.abs(current.low - prevClose)
+        );
+        if (prevAtr === undefined || isNaN(prevAtr)) return tr;
+        return ((prevAtr * (period - 1)) + tr) / period;
+    };
+    const atr = calcAtr(lastKnown.atr, newCandle, lastKnown.close, 14);
+
+    // 3. NW & RSI (Windowed - Optimized)
+    // Nadaraya-Watson and RSI stabilize quickly. We can use a sliding window 
+    // of the last ~500 candles to calculate the current tip value efficiently.
+    const lookback = 500;
+    const context = prevData.slice(-lookback);
+    const buffer = [...context, newCandle];
+    
+    // We run the standard processor on this small buffer
+    // This gives us the correct NW and RSI for the *last* element
+    const processedBuffer = processIndicators(buffer);
+    const processedLast = processedBuffer[processedBuffer.length - 1];
+
+    // 4. Merge
+    // We prefer the Incremental EMA/ATR (preserves infinite history state)
+    // And the Windowed NW/RSI (computationally feasible)
+    return {
+        ...newCandle,
+        ema12,
+        ema144,
+        ema169,
+        atr,
+        rsi: processedLast.rsi,
+        nwMid: processedLast.nwMid,
+        nwUpper: processedLast.nwUpper,
+        nwLower: processedLast.nwLower
+    };
 };

@@ -1,3 +1,4 @@
+
 import React, { useEffect, useRef } from 'react';
 import { format } from 'date-fns';
 
@@ -35,7 +36,7 @@ const LogPanel: React.FC<LogPanelProps> = ({ logs }) => {
       <div className="flex-grow overflow-y-auto p-2 font-mono text-xs space-y-1">
         {logs.map((log, i) => (
           <div key={i} className="flex gap-2 hover:bg-gray-800 p-1 rounded">
-            <span className="text-gray-600 shrink-0">[{format(new Date(log.time), 'HH:mm:ss')}]</span>
+            <span className="text-gray-600 shrink-0">[{format(new Date(log.time), 'yyyy-MM-dd HH:mm:ss')}]</span>
             <span className={`${getColor(log.type)} break-all`}>{log.message}</span>
           </div>
         ))}

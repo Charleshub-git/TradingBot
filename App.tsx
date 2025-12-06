@@ -3,7 +3,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Play, Pause, RefreshCw, Zap, BrainCircuit, Database, Settings, X, Layers, Wifi, Activity, Upload, Gauge, FlaskConical, StopCircle, ArrowLeft } from 'lucide-react';
 import { Candle, Trade, BotStatus, Strategy, DataSource } from './types';
 import { generateInitialData, generateNextCandle, fetchHistoricalData } from './services/dataGenerator';
-import { processIndicators } from './services/math';
+import { processIndicators, updateLastCandle } from './services/math';
 import { analyzeMarket } from './services/geminiService';
 import { connectBinanceStream } from './services/websocketService';
 import { parseCSV } from './services/csvParser';
@@ -17,17 +17,18 @@ const RSI_OB = 70;
 const RSI_OS = 30;
 const ATR_SL_MULTIPLIER = 2.5; // Dynamic Stop Loss Distance
 const RISK_REWARD_RATIO = 1.5; // Take Profit relative to SL distance
+const MAX_STORED_CANDLES = 3000; // Rolling buffer size to maintain performance
 
 type AppMode = 'IDLE' | 'BACKTEST' | 'LIVE';
 
 export default function App() {
-  // Initialize with 300 generated candles so the chart has data immediately
+  // Initialize with 200 generated candles so the chart has data immediately and indicators are valid
   const [data, setData] = useState<Candle[]>(() => {
-    return processIndicators(generateInitialData(300));
+    return processIndicators(generateInitialData(200));
   });
   const [appMode, setAppMode] = useState<AppMode>('IDLE');
   const [isPlaying, setIsPlaying] = useState(false);
-  const [simulationDelay, setSimulationDelay] = useState(1); // Default to MAX speed
+  const [simulationDelay, setSimulationDelay] = useState(100); // Default to moderate speed
   const [activeTrade, setActiveTrade] = useState<Trade | null>(null);
   const [tradeHistory, setTradeHistory] = useState<Trade[]>([]);
   const [logs, setLogs] = useState<{time: number, message: string, type: 'INFO' | 'SUCCESS' | 'WARNING' | 'ERROR'}[]>([]);
@@ -80,18 +81,10 @@ export default function App() {
   // Initialize Data
   const initData = async (forceSource?: DataSource, silent: boolean = false) => {
         const sourceToUse = forceSource || dataSource;
+        backlogRef.current = []; // Reset backlog to prevent ghost data
 
         if (sourceToUse === 'CSV') {
-             if (data.length > 0) {
-                 if (!silent) addLog("Resetting simulation with current CSV data.", "INFO");
-                 const splitIndex = Math.floor(data.length * 0.2); 
-                 const initialContext = data.slice(0, splitIndex);
-                 backlogRef.current = data.slice(splitIndex);
-                 setData(initialContext); 
-             } else {
-                 addLog("Please upload a CSV file to start backtesting.", "WARNING");
-                 fileInputRef.current?.click();
-             }
+             if (!silent) addLog("To reset CSV backtest, please reload the file.", "INFO");
              return;
         }
 
@@ -107,21 +100,22 @@ export default function App() {
                 const isReal = (Date.now() - rawData[rawData.length-1].time) < 24 * 60 * 60 * 1000;
                 setIsRealData(isReal);
                 
-                const splitIndex = Math.floor(rawData.length * 0.85);
-                const initialContext = rawData.slice(0, splitIndex);
-                backlogRef.current = rawData.slice(splitIndex);
+                // Start with a small context to allow simulation of the rest
+                const initialCount = 200;
+                const initialContext = rawData.slice(0, initialCount);
+                backlogRef.current = rawData.slice(initialCount);
 
                 setData(processIndicators(initialContext));
                 if (!silent) {
                     addLog(`Loaded ${rawData.length} candles from ${sourceToUse}.`, "SUCCESS");
-                    addLog(`Ready. ${backlogRef.current.length} historical candles queued.`, "INFO");
+                    addLog(`Initialized with ${initialCount}. ${backlogRef.current.length} queued for simulation.`, "INFO");
                 }
             } else {
                  throw new Error("No data returned");
             }
         } catch (e) {
             addLog(`API unreachable for ${sourceToUse}. Falling back to synthetic generator.`, "WARNING");
-            const fallback = generateInitialData(1000);
+            const fallback = generateInitialData(200);
             setData(processIndicators(fallback));
             setIsRealData(false);
         }
@@ -130,7 +124,6 @@ export default function App() {
   // Initial Background Load
   useEffect(() => {
       // Only auto-fetch real data if we aren't already working with data (though we init with random data now)
-      // The delay ensures the UI renders the random data first, then silently tries to get real data
       const timer = setTimeout(() => {
           if (dataSource !== 'CSV') initData(dataSource, true);
       }, 500);
@@ -164,20 +157,31 @@ export default function App() {
           (liveCandle, isFinal) => {
               setData(prevData => {
                   const lastCandle = prevData[prevData.length - 1];
-                  let newData = [...prevData];
-
+                  
                   if (lastCandle && liveCandle.time === lastCandle.time) {
                       // Update existing candle
+                      const newData = [...prevData];
                       newData[newData.length - 1] = liveCandle;
+                      
+                      // Optimized: Only re-process the tail
+                      const tail = newData.slice(-500);
+                      const processedTail = processIndicators(tail);
+                      newData.splice(-processedTail.length, processedTail.length, ...processedTail);
+                      return newData;
+
                   } else if (lastCandle && liveCandle.time > lastCandle.time) {
-                      // New candle started
-                      newData.push(liveCandle);
-                      if (newData.length > 500) newData.shift();
+                      // New candle
+                      const processedNewCandle = updateLastCandle(prevData, liveCandle);
+                      const newData = [...prevData, processedNewCandle];
+                      
+                      // Cap buffer size
+                      if (newData.length > MAX_STORED_CANDLES) {
+                          newData.shift();
+                      }
+                      return newData;
                   } else {
                       return prevData;
                   }
-                  
-                  return processIndicators(newData);
               });
               
               if (isFinal) {
@@ -219,28 +223,36 @@ export default function App() {
     reader.onload = (e) => {
         try {
             const text = e.target?.result as string;
-            const parsedCandles = parseCSV(text);
+            const rawCandles = parseCSV(text);
             
-            if (parsedCandles.length === 0) {
+            if (rawCandles.length === 0) {
                 throw new Error("No valid data found in CSV");
             }
 
-            // Process with indicators
-            const processedData = processIndicators(parsedCandles);
+            // RESET STATE for new simulation
+            setActiveTrade(null);
+            setTradeHistory([]);
+            setPnl(0);
             
-            // Set up simulation state
-            const splitIndex = Math.floor(processedData.length * 0.2); // Start sim earlier for CSV
-            const initialContext = processedData.slice(0, splitIndex);
-            backlogRef.current = processedData.slice(splitIndex);
+            // Start small to allow simulation playback, but large enough for indicators (EMA169) to work
+            const initialCount = 200;
+            const initialContext = rawCandles.slice(0, initialCount);
+            
+            // Queue the rest of the RAW candles for the loop to pick up one by one
+            backlogRef.current = rawCandles.slice(initialCount);
+            
+            // Process initial chunk only
+            const processedData = processIndicators(initialContext);
+            setData(processedData);
 
-            setData(initialContext);
             setDataSource('CSV');
             setAppMode('BACKTEST'); 
             setIsRealData(true);
             setIsPlaying(false);
 
-            addLog(`Successfully loaded ${parsedCandles.length} candles from CSV.`, "SUCCESS");
-            addLog(`Ready to Backtest. Press Play to start.`, "INFO");
+            addLog(`Successfully loaded ${rawCandles.length} candles from CSV.`, "SUCCESS");
+            addLog(`Initialized with first ${initialCount} candles. ${backlogRef.current.length} queued.`, "INFO");
+            addLog(`Ready to Backtest. Press Play to run simulation.`, "INFO");
 
         } catch (error) {
             console.error(error);
@@ -258,10 +270,7 @@ export default function App() {
       if (dataSource !== 'CSV') {
           // Re-init data to ensure clean slate from current source
           initData(dataSource);
-      } else {
-          // If currently CSV, reset the simulation pointer
-          initData('CSV');
-      }
+      } 
   };
 
   const stopBacktest = () => {
@@ -418,8 +427,15 @@ export default function App() {
                nextCandle = generateNextCandle(lastCandle);
            }
 
-           const newData = [...prevData.slice(-500), nextCandle]; 
-           return processIndicators(newData);
+           const processedNext = updateLastCandle(prevData, nextCandle);
+           const newData = [...prevData, processedNext];
+           
+           // IMPLEMENT ROLLING BUFFER
+           if (newData.length > MAX_STORED_CANDLES) {
+               newData.shift();
+           }
+           
+           return newData;
         });
       }, simulationDelay);
     }
@@ -632,7 +648,7 @@ export default function App() {
         <div className="col-span-9 flex flex-col gap-4 min-h-0">
            <div className="flex-grow h-full min-h-0">
              {data.length > 0 ? (
-                 <ChartPanel data={data} strategy={currentStrategy} />
+                 <ChartPanel data={data} strategy={currentStrategy} isPlaying={isPlaying} />
              ) : (
                  <div className="h-full flex flex-col items-center justify-center bg-gray-900 rounded-lg border border-gray-800 text-gray-500 gap-4">
                      <Activity size={48} className="opacity-20" />

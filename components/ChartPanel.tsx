@@ -1,17 +1,18 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { Eye, EyeOff } from 'lucide-react';
-import { createChart, ColorType, CrosshairMode, IChartApi, ISeriesApi, Time } from 'lightweight-charts';
+import { createChart, ColorType, CrosshairMode, IChartApi, ISeriesApi, Time, SeriesMarker } from 'lightweight-charts';
 import { Candle, Strategy } from '../types';
 import { format } from 'date-fns';
 
 interface ChartPanelProps {
   data: Candle[];
   strategy: Strategy;
+  isPlaying: boolean;
 }
 
-const ChartPanel: React.FC<ChartPanelProps> = ({ data, strategy }) => {
-  const [showIndicators, setShowIndicators] = useState(false);
+const ChartPanel: React.FC<ChartPanelProps> = ({ data, strategy, isPlaying }) => {
+  const [showIndicators, setShowIndicators] = useState(true);
   
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -29,8 +30,18 @@ const ChartPanel: React.FC<ChartPanelProps> = ({ data, strategy }) => {
   const ema144Ref = useRef<ISeriesApi<"Line"> | null>(null);
   const ema169Ref = useRef<ISeriesApi<"Line"> | null>(null);
 
+  // Track state for incremental updates
+  const lastProcessedTimeRef = useRef<number | null>(null);
+  const prevDataLengthRef = useRef<number>(0);
+
   // Legend State
   const [legendData, setLegendData] = useState<any>(null);
+
+  // Consistent Date Formatter
+  const formatTime = (time: number) => {
+      // time is in seconds (lightweight-charts), Date expects ms
+      return format(new Date(time * 1000), 'yyyy-MM-dd HH:mm');
+  };
 
   // Initialize Chart
   useEffect(() => {
@@ -47,6 +58,10 @@ const ChartPanel: React.FC<ChartPanelProps> = ({ data, strategy }) => {
       },
       width: chartContainerRef.current.clientWidth,
       height: chartContainerRef.current.clientHeight,
+      localization: {
+        // Use the same formatter for the axis as the legend to prevent discrepancies
+        timeFormatter: (timestamp: number) => formatTime(timestamp),
+      },
       timeScale: {
         timeVisible: true,
         secondsVisible: false,
@@ -132,22 +147,35 @@ const ChartPanel: React.FC<ChartPanelProps> = ({ data, strategy }) => {
   useEffect(() => {
     if (!chartRef.current || !candleSeriesRef.current) return;
 
-    // Clean up old indicator series if strategy changes or disabled
+    // Helper to clean up series
     const cleanSeries = (ref: React.MutableRefObject<ISeriesApi<"Line"> | null>) => {
         if (ref.current) {
-            try {
-                chartRef.current?.removeSeries(ref.current);
-            } catch (e) { 
-                // ignore removal errors 
-            }
+            try { chartRef.current?.removeSeries(ref.current); } catch (e) { }
             ref.current = null;
         }
     };
 
-    // Prepare Data & Validate (Lightweight Charts uses Seconds for unix timestamps)
-    // Filter out any invalid data points (NaN, null, etc) to prevent "Value is null" crash
+    // Ensure indicator series exist based on strategy
+    if (showIndicators) {
+        if (strategy === 'SCALPER') {
+            if (!upperBandRef.current) upperBandRef.current = chartRef.current.addLineSeries({ color: '#06b6d4', lineWidth: 2, title: 'Top Band', crosshairMarkerVisible: false });
+            if (!midBandRef.current) midBandRef.current = chartRef.current.addLineSeries({ color: '#eab308', lineWidth: 2, title: 'Midline', crosshairMarkerVisible: false });
+            if (!lowerBandRef.current) lowerBandRef.current = chartRef.current.addLineSeries({ color: '#d946ef', lineWidth: 2, title: 'Bot Band', crosshairMarkerVisible: false });
+            cleanSeries(ema12Ref); cleanSeries(ema144Ref); cleanSeries(ema169Ref);
+        } else {
+            if (!ema12Ref.current) ema12Ref.current = chartRef.current.addLineSeries({ color: '#eab308', lineWidth: 2, title: 'EMA 12', crosshairMarkerVisible: false });
+            if (!ema144Ref.current) ema144Ref.current = chartRef.current.addLineSeries({ color: '#06b6d4', lineWidth: 2, title: 'EMA 144', crosshairMarkerVisible: false });
+            if (!ema169Ref.current) ema169Ref.current = chartRef.current.addLineSeries({ color: '#d946ef', lineWidth: 2, title: 'EMA 169', crosshairMarkerVisible: false });
+            cleanSeries(upperBandRef); cleanSeries(midBandRef); cleanSeries(lowerBandRef);
+        }
+    } else {
+        cleanSeries(upperBandRef); cleanSeries(midBandRef); cleanSeries(lowerBandRef);
+        cleanSeries(ema12Ref); cleanSeries(ema144Ref); cleanSeries(ema169Ref);
+    }
+
+    // Format Data
     const formattedData = data
-        .filter(d => d.time && !isNaN(d.open) && !isNaN(d.high) && !isNaN(d.low) && !isNaN(d.close))
+        .filter(d => d.time && !isNaN(d.open))
         .map(d => ({
             time: (d.time / 1000) as Time,
             open: d.open,
@@ -156,81 +184,86 @@ const ChartPanel: React.FC<ChartPanelProps> = ({ data, strategy }) => {
             close: d.close,
         }));
 
-    // Update Candle Data
-    if (formattedData.length > 0) {
-        candleSeriesRef.current.setData(formattedData);
-    }
+    if (formattedData.length === 0) return;
 
-    // Initial default legend data (latest candle)
-    if (data.length > 0) {
-        const last = data[data.length - 1];
-        if (!isNaN(last.close)) {
-            setLegendData({
-                time: last.time / 1000,
-                open: last.open,
-                high: last.high,
-                low: last.low,
-                close: last.close
-            });
+    // --- UPDATE LOGIC (Incremental vs Full Reset) ---
+    const lastCandle = formattedData[formattedData.length - 1];
+    
+    // Check if this is a simple append (one new candle, time moved forward)
+    // We strictly check if the time is newer to allow for rolling buffers (where length stays same)
+    const isNewTime = lastProcessedTimeRef.current !== null && (lastCandle.time as number) > lastProcessedTimeRef.current!;
+
+    if (isNewTime) {
+        // 1. Update Candle
+        candleSeriesRef.current.update(lastCandle);
+
+        // 2. Update Indicators
+        const rawLast = data[data.length - 1];
+        const t = (rawLast.time / 1000) as Time;
+        
+        if (showIndicators) {
+            if (strategy === 'SCALPER') {
+                upperBandRef.current?.update({ time: t, value: rawLast.nwUpper || rawLast.close });
+                midBandRef.current?.update({ time: t, value: rawLast.nwMid || rawLast.close });
+                lowerBandRef.current?.update({ time: t, value: rawLast.nwLower || rawLast.close });
+            } else {
+                ema12Ref.current?.update({ time: t, value: rawLast.ema12 || rawLast.close });
+                ema144Ref.current?.update({ time: t, value: rawLast.ema144 || rawLast.close });
+                ema169Ref.current?.update({ time: t, value: rawLast.ema169 || rawLast.close });
+            }
+        }
+    } else {
+        // FULL RESET (Load new CSV, change timeframe, first load, or strategy change)
+        candleSeriesRef.current.setData(formattedData);
+        
+        // Reset Indicators
+        if (showIndicators) {
+            const mapLine = (k: keyof Candle) => data.map(d => ({ time: (d.time/1000) as Time, value: (d[k] as number) || d.close }));
+            if (strategy === 'SCALPER') {
+                upperBandRef.current?.setData(mapLine('nwUpper'));
+                midBandRef.current?.setData(mapLine('nwMid'));
+                lowerBandRef.current?.setData(mapLine('nwLower'));
+            } else {
+                ema12Ref.current?.setData(mapLine('ema12'));
+                ema144Ref.current?.setData(mapLine('ema144'));
+                ema169Ref.current?.setData(mapLine('ema169'));
+            }
+        }
+
+        // Only auto-fit time scale on full reset or significant change, not during simulation tick
+        if (!isPlaying && formattedData.length > 0) {
+             chartRef.current.timeScale().fitContent();
         }
     }
 
-    // --- INDICATOR LOGIC ---
+    // Update Refs
+    lastProcessedTimeRef.current = (lastCandle.time as number);
+    prevDataLengthRef.current = formattedData.length;
 
-    if (!showIndicators) {
-        // Remove all if hidden
-        cleanSeries(upperBandRef);
-        cleanSeries(midBandRef);
-        cleanSeries(lowerBandRef);
-        cleanSeries(ema12Ref);
-        cleanSeries(ema144Ref);
-        cleanSeries(ema169Ref);
-        return;
+    // Markers
+    const markers: SeriesMarker<Time>[] = [{
+        time: lastCandle.time,
+        position: 'aboveBar',
+        color: '#f59e0b',
+        shape: 'arrowDown',
+        text: 'HEAD',
+        size: 2,
+    }];
+    candleSeriesRef.current.setMarkers(markers);
+
+    // Update Legend
+    if (data.length > 0) {
+        const last = data[data.length - 1];
+        setLegendData({
+            time: last.time / 1000,
+            open: last.open,
+            high: last.high,
+            low: last.low,
+            close: last.close
+        });
     }
 
-    const mapLineData = (key: keyof Candle, fallbackKey: keyof Candle = 'close') => {
-        return data
-            .filter(d => d.time && (d[key] !== undefined || d[fallbackKey] !== undefined))
-            .map(d => ({ 
-                time: (d.time / 1000) as Time, 
-                value: (d[key] !== undefined && !isNaN(d[key] as number)) ? (d[key] as number) : (d[fallbackKey] as number) 
-            }));
-    };
-
-    if (strategy === 'SCALPER') {
-        // Clean Vegas
-        cleanSeries(ema12Ref);
-        cleanSeries(ema144Ref);
-        cleanSeries(ema169Ref);
-
-        // Init Scalper Lines if not exists
-        if (!upperBandRef.current) upperBandRef.current = chartRef.current.addLineSeries({ color: '#06b6d4', lineWidth: 2, title: 'Top Band', crosshairMarkerVisible: false });
-        if (!midBandRef.current) midBandRef.current = chartRef.current.addLineSeries({ color: '#eab308', lineWidth: 2, title: 'Midline', crosshairMarkerVisible: false });
-        if (!lowerBandRef.current) lowerBandRef.current = chartRef.current.addLineSeries({ color: '#d946ef', lineWidth: 2, title: 'Bot Band', crosshairMarkerVisible: false });
-
-        // Set Data
-        upperBandRef.current.setData(mapLineData('nwUpper'));
-        midBandRef.current.setData(mapLineData('nwMid'));
-        lowerBandRef.current.setData(mapLineData('nwLower'));
-
-    } else {
-        // Clean Scalper
-        cleanSeries(upperBandRef);
-        cleanSeries(midBandRef);
-        cleanSeries(lowerBandRef);
-
-        // Init Vegas Lines if not exists
-        if (!ema12Ref.current) ema12Ref.current = chartRef.current.addLineSeries({ color: '#eab308', lineWidth: 2, title: 'EMA 12', crosshairMarkerVisible: false });
-        if (!ema144Ref.current) ema144Ref.current = chartRef.current.addLineSeries({ color: '#06b6d4', lineWidth: 2, title: 'EMA 144', crosshairMarkerVisible: false });
-        if (!ema169Ref.current) ema169Ref.current = chartRef.current.addLineSeries({ color: '#d946ef', lineWidth: 2, title: 'EMA 169', crosshairMarkerVisible: false });
-
-        // Set Data
-        ema12Ref.current.setData(mapLineData('ema12'));
-        ema144Ref.current.setData(mapLineData('ema144'));
-        ema169Ref.current.setData(mapLineData('ema169'));
-    }
-
-  }, [data, strategy, showIndicators]);
+  }, [data, strategy, showIndicators, isPlaying]);
 
 
   return (
@@ -244,7 +277,7 @@ const ChartPanel: React.FC<ChartPanelProps> = ({ data, strategy }) => {
         </h2>
         {legendData && (
             <div className="flex gap-3 text-xs font-mono bg-white/80 backdrop-blur-sm p-1 rounded shadow-sm border border-gray-200">
-                <span className="text-gray-500 font-bold">{format(new Date(legendData.time * 1000), 'HH:mm')}</span>
+                <span className="text-gray-500 font-bold">{formatTime(legendData.time)}</span>
                 <span className="text-gray-800">O: <span className="font-semibold">{legendData.open?.toFixed(2)}</span></span>
                 <span className="text-gray-800">H: <span className="font-semibold">{legendData.high?.toFixed(2)}</span></span>
                 <span className="text-gray-800">L: <span className="font-semibold">{legendData.low?.toFixed(2)}</span></span>

@@ -25,31 +25,24 @@ export const parseCSV = (content: string): Candle[] => {
   }
 
   // Fallback to whitespace if standard delimiters fail
-  // We use a regex that matches one or more whitespace characters
   if (maxCols < 2) {
       delimiter = /\s+/; 
   }
 
   // 2. Detect Header & Map Columns
-  // Default mapping (Standard OHLCV)
   let colMap = { time: 0, open: 1, high: 2, low: 3, close: 4, volume: 5 };
   
-  // Clean header parts
   const headerParts = sampleLine.split(delimiter)
     .map(p => p.trim().replace(/['"]/g, ''))
     .filter(p => p.length > 0);
   
-  // Check if first row is header (contains letters)
   const isHeader = headerParts.some(part => /[a-zA-Z]/.test(part));
   
   let startRow = 0;
   
   if (isHeader) {
       startRow = 1; // Skip header row
-      
       const lowerHeaders = headerParts.map(h => h.toLowerCase());
-      
-      // Helper to find index of keyword
       const findIdx = (keywords: string[]) => lowerHeaders.findIndex(h => keywords.some(k => h.includes(k)));
       
       const tIdx = findIdx(['time', 'date', 'ts', 'dt', 'timestamp']);
@@ -59,7 +52,6 @@ export const parseCSV = (content: string): Candle[] => {
       const cIdx = findIdx(['close']);
       const vIdx = findIdx(['vol']);
 
-      // Only update map if we found plausible headers, otherwise stick to default
       if (tIdx !== -1) colMap.time = tIdx;
       if (oIdx !== -1) colMap.open = oIdx;
       if (hIdx !== -1) colMap.high = hIdx;
@@ -74,10 +66,8 @@ export const parseCSV = (content: string): Candle[] => {
     const line = lines[i].trim();
     if (!line) continue;
     
-    // Split and clean
     const parts = line.split(delimiter).map(p => p.trim()).filter(p => p.length > 0);
     
-    // Need enough columns to satisfy the map
     const maxIdx = Math.max(...Object.values(colMap));
     if (parts.length <= maxIdx) continue;
 
@@ -89,14 +79,20 @@ export const parseCSV = (content: string): Candle[] => {
 
     if (/^\d+(\.\d+)?$/.test(timeRaw)) {
         const ts = parseFloat(timeRaw);
-        // Auto-detect seconds vs ms (if < 100 billion, assume seconds)
         if (ts < 100000000000) {
             time = ts * 1000;
         } else {
             time = ts;
         }
     } else {
-        const parsed = Date.parse(timeRaw);
+        // Try standard parsing first
+        let parsed = Date.parse(timeRaw);
+        
+        // If NaN, try replacing space with T for ISO compliance (e.g. "2017-09-18 14:30")
+        if (isNaN(parsed) && timeRaw.includes(' ')) {
+            parsed = Date.parse(timeRaw.replace(' ', 'T'));
+        }
+
         if (!isNaN(parsed)) time = parsed;
     }
 
@@ -109,17 +105,9 @@ export const parseCSV = (content: string): Candle[] => {
     const close = parseFloat(cleanParts[colMap.close]);
     const volume = parseFloat(cleanParts[colMap.volume]) || 0;
 
-    // Validation
     if (isNaN(open) || isNaN(close) || isNaN(high) || isNaN(low)) continue;
 
-    candles.push({
-      time,
-      open,
-      high,
-      low,
-      close,
-      volume
-    });
+    candles.push({ time, open, high, low, close, volume });
   }
 
   return candles.sort((a, b) => a.time - b.time);
