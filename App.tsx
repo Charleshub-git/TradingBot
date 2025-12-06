@@ -251,7 +251,7 @@ export default function App() {
             setIsPlaying(false);
 
             addLog(`Successfully loaded ${rawCandles.length} candles from CSV.`, "SUCCESS");
-            addLog(`Initialized with first ${initialCount} candles. ${backlogRef.current.length} queued.`, "INFO");
+            addLog(`Initialized with first ${initialCount} candles. ${backlogRef.current.length} queued for simulation.`, "INFO");
             addLog(`Ready to Backtest. Press Play to run simulation.`, "INFO");
 
         } catch (error) {
@@ -463,7 +463,14 @@ export default function App() {
     setIsAnalyzing(false);
   }
 
-  const lastCandle = data[data.length - 1] || { close: 0, time: 0 };
+  const lastCandle = data[data.length - 1] || { 
+    time: 0, 
+    open: 0, 
+    high: 0, 
+    low: 0, 
+    close: 0, 
+    volume: 0 
+  };
   
   return (
     <div className="flex flex-col h-full bg-gray-950 text-white p-4 gap-4 relative">
@@ -642,120 +649,139 @@ export default function App() {
             </div>
         </div>
       </div>
-
-      {/* Main Content Grid */}
-      <div className="flex-grow grid grid-cols-12 gap-4 min-h-0">
-        <div className="col-span-9 flex flex-col gap-4 min-h-0">
-           <div className="flex-grow h-full min-h-0">
-             {data.length > 0 ? (
-                 <ChartPanel data={data} strategy={currentStrategy} isPlaying={isPlaying} />
-             ) : (
-                 <div className="h-full flex flex-col items-center justify-center bg-gray-900 rounded-lg border border-gray-800 text-gray-500 gap-4">
-                     <Activity size={48} className="opacity-20" />
-                     <p>Ready to start. Select a mode above.</p>
-                 </div>
-             )}
+      
+      {/* Content Area */}
+      <div className="flex-grow flex gap-4 min-h-0 overflow-hidden">
+        <div className="flex-grow h-full flex flex-col gap-4">
+           {/* Chart */}
+           <div className="flex-grow min-h-0">
+               <ChartPanel 
+                    data={data} 
+                    strategy={currentStrategy} 
+                    isPlaying={isPlaying} 
+                />
            </div>
            
-           {/* Gemini Analysis Output */}
-           {geminiAnalysis && (
-             <div className="bg-gray-900 border border-purple-900/50 p-4 rounded-lg shrink-0 animate-in fade-in slide-in-from-bottom-2">
-                <div className="flex items-center gap-2 mb-2">
-                    <BrainCircuit size={16} className="text-purple-400" />
-                    <span className="text-xs font-bold text-purple-400 uppercase">AI Analyst Insight</span>
-                </div>
-                <p className="text-sm text-gray-300 leading-relaxed">{geminiAnalysis}</p>
-             </div>
-           )}
-        </div>
-
-        <div className="col-span-3 flex flex-col gap-4 min-h-0">
-          <div className="shrink-0">
-            <StatsPanel 
-                status={activeTrade ? BotStatus.IN_POSITION : (appMode === 'LIVE' || isPlaying) ? BotStatus.SCANNING : BotStatus.IDLE}
-                lastCandle={lastCandle}
-                activeTrade={activeTrade}
+           {/* Stats */}
+           <div className="h-32 shrink-0">
+               <StatsPanel 
+                status={appMode === 'LIVE' ? (activeTrade ? BotStatus.IN_POSITION : BotStatus.SCANNING) : BotStatus.IDLE} 
+                lastCandle={lastCandle} 
+                activeTrade={activeTrade} 
                 pnl={pnl}
                 strategy={currentStrategy}
-            />
-          </div>
-          <div className="flex-grow min-h-0">
-             <LogPanel logs={logs} />
-          </div>
+               />
+           </div>
+        </div>
+
+        {/* Right Sidebar - Logs */}
+        <div className="w-80 shrink-0 h-full">
+            <LogPanel logs={logs} />
         </div>
       </div>
 
-      {/* Settings Modal */}
+      {/* API Settings Modal */}
       {isSettingsOpen && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-            <div className="bg-gray-900 border border-gray-700 rounded-lg w-full max-w-md shadow-2xl animate-in fade-in zoom-in-95 duration-200">
-                <div className="flex justify-between items-center p-4 border-b border-gray-800">
-                    <h2 className="text-lg font-bold text-white flex items-center gap-2">
-                        <Settings size={18} /> Settings
-                    </h2>
-                    <button onClick={() => setIsSettingsOpen(false)} className="text-gray-500 hover:text-white transition-colors">
-                        <X size={20} />
-                    </button>
-                </div>
-                <div className="p-6 space-y-6">
-                    {/* FMP Config */}
-                    <div className="animate-in fade-in slide-in-from-top-2">
-                        <div className="bg-yellow-900/20 border border-yellow-900/50 p-3 rounded text-xs text-yellow-200 mb-3">
-                            Financial Modeling Prep API requires a valid API Key.
-                        </div>
-                        <label className="block text-xs font-bold text-gray-400 uppercase mb-1">FMP API Key</label>
-                        <input 
-                            type="text" 
-                            value={fmpApiKey}
-                            onChange={(e) => setFmpApiKey(e.target.value)}
-                            className="w-full bg-gray-950 border border-gray-800 rounded p-2.5 text-sm text-gray-100 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-all placeholder-gray-700 font-mono"
-                            placeholder="Example: 5025d5..."
-                        />
-                    </div>
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-900 border border-gray-800 rounded-lg w-full max-w-md p-6 relative shadow-2xl">
+            <button 
+              onClick={() => setIsSettingsOpen(false)}
+              className="absolute top-4 right-4 text-gray-500 hover:text-white"
+            >
+              <X size={20} />
+            </button>
+            
+            <h2 className="text-xl font-bold mb-6 flex items-center gap-2">
+              <Database className="text-blue-500" />
+              Data Source Settings
+            </h2>
 
-                    {/* Alpaca Config */}
-                     <div className="animate-in fade-in slide-in-from-top-2 space-y-4">
-                        <div className="bg-blue-900/20 border border-blue-900/50 p-3 rounded text-xs text-blue-200">
-                            Alpaca Markets requires API Key & Secret.
-                        </div>
-                        <div>
-                            <label className="block text-xs font-bold text-gray-400 uppercase mb-1">Alpaca API Key ID</label>
-                            <input 
-                                type="text" 
-                                value={alpacaConfig.key}
-                                onChange={(e) => setAlpacaConfig(prev => ({...prev, key: e.target.value}))}
-                                className="w-full bg-gray-950 border border-gray-800 rounded p-2.5 text-sm text-gray-100 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-all placeholder-gray-700 font-mono"
-                                placeholder="PK******************"
-                            />
-                        </div>
-                        <div>
-                            <label className="block text-xs font-bold text-gray-400 uppercase mb-1">Alpaca Secret Key</label>
-                            <input 
-                                type="password" 
-                                value={alpacaConfig.secret}
-                                onChange={(e) => setAlpacaConfig(prev => ({...prev, secret: e.target.value}))}
-                                className="w-full bg-gray-950 border border-gray-800 rounded p-2.5 text-sm text-gray-100 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-all placeholder-gray-700 font-mono"
-                                placeholder="***********************************"
-                            />
-                        </div>
-                    </div>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-gray-400 mb-1 uppercase">Preferred Source</label>
+                <select 
+                  value={dataSource}
+                  onChange={(e) => setDataSource(e.target.value as DataSource)}
+                  className="w-full bg-gray-950 border border-gray-700 rounded p-2 text-sm text-white focus:border-blue-500 outline-none"
+                >
+                  <option value="BINANCE">Binance (Public API)</option>
+                  <option value="ALPACA">Alpaca Markets</option>
+                  <option value="FMP">Financial Modeling Prep</option>
+                </select>
+              </div>
+
+              {dataSource === 'ALPACA' && (
+                <div className="space-y-3 animate-in fade-in slide-in-from-top-2">
+                   <div>
+                    <label className="block text-xs font-bold text-gray-500 mb-1">Alpaca Key ID</label>
+                    <input 
+                      type="text" 
+                      value={alpacaConfig.key}
+                      onChange={(e) => setAlpacaConfig({...alpacaConfig, key: e.target.value})}
+                      className="w-full bg-gray-950 border border-gray-700 rounded p-2 text-sm text-white focus:border-blue-500 outline-none"
+                      placeholder="PK..."
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-gray-500 mb-1">Alpaca Secret Key</label>
+                    <input 
+                      type="password" 
+                      value={alpacaConfig.secret}
+                      onChange={(e) => setAlpacaConfig({...alpacaConfig, secret: e.target.value})}
+                      className="w-full bg-gray-950 border border-gray-700 rounded p-2 text-sm text-white focus:border-blue-500 outline-none"
+                      placeholder="SK..."
+                    />
+                  </div>
                 </div>
-                <div className="p-4 border-t border-gray-800 flex justify-end gap-3 bg-gray-900/50 rounded-b-lg">
-                    <button 
-                        onClick={() => setIsSettingsOpen(false)}
-                        className="px-4 py-2 hover:bg-gray-800 text-gray-400 rounded text-sm font-medium transition-colors"
-                    >
-                        Cancel
-                    </button>
-                    <button 
-                        onClick={saveSettings}
-                        className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded text-sm font-medium transition-colors shadow-lg shadow-blue-900/20"
-                    >
-                        Save Configuration
-                    </button>
+              )}
+
+              {dataSource === 'FMP' && (
+                <div className="animate-in fade-in slide-in-from-top-2">
+                    <label className="block text-xs font-bold text-gray-500 mb-1">FMP API Key</label>
+                    <input 
+                      type="text" 
+                      value={fmpApiKey}
+                      onChange={(e) => setFmpApiKey(e.target.value)}
+                      className="w-full bg-gray-950 border border-gray-700 rounded p-2 text-sm text-white focus:border-blue-500 outline-none"
+                      placeholder="Your FMP Key..."
+                    />
                 </div>
+              )}
+
+              <div className="pt-4 border-t border-gray-800">
+                <button 
+                  onClick={saveSettings}
+                  className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 rounded transition-colors"
+                >
+                  Save Configuration
+                </button>
+              </div>
             </div>
+          </div>
         </div>
+      )}
+
+      {/* AI Analysis Modal */}
+      {geminiAnalysis && (
+           <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+              <div className="bg-gray-900 border border-purple-500/50 rounded-lg w-full max-w-lg p-6 relative shadow-2xl">
+                 <button 
+                  onClick={() => setGeminiAnalysis("")}
+                  className="absolute top-4 right-4 text-gray-500 hover:text-white"
+                >
+                  <X size={20} />
+                </button>
+                <h2 className="text-xl font-bold mb-4 flex items-center gap-2 text-purple-400">
+                    <BrainCircuit /> AI Market Analysis
+                </h2>
+                <div className="bg-gray-950 p-4 rounded border border-gray-800 text-gray-300 text-sm leading-relaxed whitespace-pre-wrap">
+                    {geminiAnalysis}
+                </div>
+                <div className="mt-4 text-xs text-gray-600 text-center">
+                    Powered by Google Gemini 3 Pro
+                </div>
+              </div>
+           </div>
       )}
     </div>
   );

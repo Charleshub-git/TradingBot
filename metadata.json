@@ -1,5 +1,5 @@
 {
-  "name": "Nadaraya-Watson Scalper Simulator",
-  "description": "A 5-minute scalping strategy simulator using Nadaraya-Watson Envelope, RSI Reversals, and ATR-based risk management.",
+  "name": "Vegas Tunnel & Nadaraya-Watson Scalper Bot",
+  "description": "A sophisticated cryptocurrency trading simulator featuring Nadaraya-Watson Envelope and Vegas Tunnel strategies.",
   "requestFramePermissions": []
 }

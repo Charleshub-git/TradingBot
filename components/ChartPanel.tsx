@@ -128,11 +128,13 @@ const ChartPanel: React.FC<ChartPanelProps> = ({ data, strategy, isPlaying }) =>
       }
     });
 
-    // Handle Resize
     const handleResize = () => {
-      if (chartContainerRef.current && chartRef.current) {
-        chartRef.current.applyOptions({ width: chartContainerRef.current.clientWidth, height: chartContainerRef.current.clientHeight });
-      }
+        if (chartContainerRef.current && chartRef.current) {
+            chartRef.current.applyOptions({ 
+                width: chartContainerRef.current.clientWidth,
+                height: chartContainerRef.current.clientHeight
+            });
+        }
     };
 
     window.addEventListener('resize', handleResize);

@@ -1,4 +1,3 @@
-
 import { GoogleGenAI } from "@google/genai";
 import { Candle, Strategy } from "../types";
 
@@ -15,12 +14,15 @@ try {
 export const analyzeMarket = async (lastCandle: Candle, trend: string, strategy: Strategy): Promise<string> => {
   if (!ai) return "API Key not configured. Please set process.env.API_KEY to use Gemini.";
 
-  let prompt = "";
+  // Define system instruction based on strategy
+  const systemInstruction = strategy === 'SCALPER'
+    ? "Act as a professional crypto quant scalper using a Nadaraya-Watson Envelope + RSI Reversal Strategy on 5m timeframe. Your goal is to identify high-probability reversal setups."
+    : "Act as a professional crypto trader using the Vegas Tunnel Strategy (EMA 144 & 169) on 5m timeframe. Your goal is to identify trend continuation or tunnel breakouts.";
+
+  let dataContext = "";
 
   if (strategy === 'SCALPER') {
-      prompt = `
-        Act as a professional crypto quant scalper using a Nadaraya-Watson Envelope + RSI Reversal Strategy on 5m timeframe.
-        
+      dataContext = `
         Current Market Data (BTC/USDT 5m):
         - Price: $${lastCandle.close.toFixed(2)}
         - RSI (14): ${lastCandle.rsi?.toFixed(2)} (Oversold < 30, Overbought > 70)
@@ -28,14 +30,10 @@ export const analyzeMarket = async (lastCandle: Candle, trend: string, strategy:
         - Nadaraya-Watson Lower: ${lastCandle.nwLower?.toFixed(2)}
         - ATR (Vol): ${lastCandle.atr?.toFixed(2)}
 
-        Signal: ${trend}
-
-        Provide a concise 2-sentence analysis on whether a reversal is likely or if we should wait.
+        Signal Context: ${trend}
       `;
   } else {
-      prompt = `
-        Act as a professional crypto trader using the Vegas Tunnel Strategy (EMA 144 & 169) on 5m timeframe.
-        
+      dataContext = `
         Current Market Data (BTC/USDT 5m):
         - Price: $${lastCandle.close.toFixed(2)}
         - EMA 12 (Fast): ${lastCandle.ema12?.toFixed(2)}
@@ -43,17 +41,25 @@ export const analyzeMarket = async (lastCandle: Candle, trend: string, strategy:
         - EMA 169 (Tunnel Bottom): ${lastCandle.ema169?.toFixed(2)}
         - ATR (Vol): ${lastCandle.atr?.toFixed(2)}
 
-        Signal: ${trend}
-
-        Provide a concise 2-sentence analysis on trend direction and tunnel breakout strength.
+        Signal Context: ${trend}
       `;
   }
 
+  const prompt = `
+    ${dataContext}
+    Provide a concise 2-sentence analysis on the market situation based on the data provided.
+  `;
+
   try {
-    const model = 'gemini-2.5-flash';
+    // Use gemini-3-pro-preview for complex reasoning tasks
+    const model = 'gemini-3-pro-preview';
     const response = await ai.models.generateContent({
       model: model,
       contents: prompt,
+      config: {
+        systemInstruction: systemInstruction,
+        thinkingConfig: { thinkingBudget: 1024 }, // Enable reasoning for deeper analysis
+      }
     });
     return response.text || "No analysis generated.";
   } catch (error) {
