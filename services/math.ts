@@ -1,5 +1,4 @@
 
-
 import { Candle } from '../types';
 
 /**
@@ -116,6 +115,94 @@ export const calculateATR = (data: Candle[], period: number = 14): number[] => {
 
   return atrArray;
 };
+
+/**
+ * Calculates Average Directional Index (ADX)
+ */
+export const calculateADX = (data: Candle[], period: number = 14): number[] => {
+    const adxArray: number[] = new Array(data.length).fill(0);
+    if (data.length < period * 2) return adxArray;
+
+    const tr: number[] = [];
+    const plusDM: number[] = [];
+    const minusDM: number[] = [];
+
+    // 1. Calculate TR, +DM, -DM
+    for (let i = 0; i < data.length; i++) {
+        if (i === 0) {
+            tr.push(0); plusDM.push(0); minusDM.push(0);
+            continue;
+        }
+        
+        const curr = data[i];
+        const prev = data[i - 1];
+
+        // TR
+        tr.push(Math.max(
+            curr.high - curr.low,
+            Math.abs(curr.high - prev.close),
+            Math.abs(curr.low - prev.close)
+        ));
+
+        // DM
+        const upMove = curr.high - prev.high;
+        const downMove = prev.low - curr.low;
+
+        if (upMove > downMove && upMove > 0) plusDM.push(upMove);
+        else plusDM.push(0);
+
+        if (downMove > upMove && downMove > 0) minusDM.push(downMove);
+        else minusDM.push(0);
+    }
+
+    // 2. Smooth TR, +DM, -DM (Wilder's Smoothing)
+    const smoothTR: number[] = new Array(data.length).fill(0);
+    const smoothPlusDM: number[] = new Array(data.length).fill(0);
+    const smoothMinusDM: number[] = new Array(data.length).fill(0);
+
+    // Initial smoothing (Sum)
+    let sumTR = 0, sumPDM = 0, sumMDM = 0;
+    for (let i = 1; i <= period; i++) {
+        sumTR += tr[i]; sumPDM += plusDM[i]; sumMDM += minusDM[i];
+    }
+    smoothTR[period] = sumTR;
+    smoothPlusDM[period] = sumPDM;
+    smoothMinusDM[period] = sumMDM;
+
+    // Subsequent smoothing
+    for (let i = period + 1; i < data.length; i++) {
+        smoothTR[i] = smoothTR[i - 1] - (smoothTR[i - 1] / period) + tr[i];
+        smoothPlusDM[i] = smoothPlusDM[i - 1] - (smoothPlusDM[i - 1] / period) + plusDM[i];
+        smoothMinusDM[i] = smoothMinusDM[i - 1] - (smoothMinusDM[i - 1] / period) + minusDM[i];
+    }
+
+    // 3. Calculate DX and ADX
+    const dx: number[] = new Array(data.length).fill(0);
+    
+    for (let i = period; i < data.length; i++) {
+        const pdi = (smoothPlusDM[i] / smoothTR[i]) * 100;
+        const mdi = (smoothMinusDM[i] / smoothTR[i]) * 100;
+        
+        if (pdi + mdi === 0) dx[i] = 0;
+        else dx[i] = (Math.abs(pdi - mdi) / (pdi + mdi)) * 100;
+    }
+
+    // ADX is smoothed DX
+    // First ADX is average of DX
+    let sumDX = 0;
+    for (let i = period; i < period * 2; i++) {
+        sumDX += dx[i];
+    }
+    adxArray[period * 2 - 1] = sumDX / period;
+
+    // Subsequent ADX
+    for (let i = period * 2; i < data.length; i++) {
+        adxArray[i] = ((adxArray[i - 1] * (period - 1)) + dx[i]) / period;
+    }
+
+    return adxArray;
+};
+
 
 /**
  * Calculates Nadaraya-Watson Envelope (Endpoint Estimation)
@@ -242,6 +329,11 @@ export const processIndicators = (candles: Candle[]): Candle[] => {
     const EMA_FAST = 12;
     const EMA_TUNNEL_1 = 144;
     const EMA_TUNNEL_2 = 169;
+    
+    // Vegas ADX Params
+    const EMA_TREND_1 = 576;
+    const EMA_TREND_2 = 676;
+    const ADX_PERIOD = 14;
 
     // Ensure candles is an array and has valid data
     if (!Array.isArray(candles) || candles.length === 0) return [];
@@ -258,10 +350,13 @@ export const processIndicators = (candles: Candle[]): Candle[] => {
     const rsi = calculateRSI(safeCandles, RSI_PERIOD);
     const atr = calculateATR(safeCandles, ATR_PERIOD);
     const nw = calculateNadarayaWatson(safeCandles, NW_BANDWIDTH, NW_MULT);
+    const adx = calculateADX(safeCandles, ADX_PERIOD);
     
     const ema12 = calculateEMA(safeCandles, EMA_FAST);
     const ema144 = calculateEMA(safeCandles, EMA_TUNNEL_1);
     const ema169 = calculateEMA(safeCandles, EMA_TUNNEL_2);
+    const ema576 = calculateEMA(safeCandles, EMA_TREND_1);
+    const ema676 = calculateEMA(safeCandles, EMA_TREND_2);
 
     return safeCandles.map((c, i) => ({
         ...c,
@@ -273,6 +368,9 @@ export const processIndicators = (candles: Candle[]): Candle[] => {
         ema12: ema12[i] || c.close,
         ema144: ema144[i] || c.close,
         ema169: ema169[i] || c.close,
+        ema576: ema576[i] || c.close,
+        ema676: ema676[i] || c.close,
+        adx: adx[i] || 0
     }));
 };
 
@@ -300,6 +398,8 @@ export const updateLastCandle = (prevData: Candle[], newCandle: Candle): Candle 
     const ema12 = calcEma(lastKnown.ema12, newCandle.close, 12);
     const ema144 = calcEma(lastKnown.ema144, newCandle.close, 144);
     const ema169 = calcEma(lastKnown.ema169, newCandle.close, 169);
+    const ema576 = calcEma(lastKnown.ema576, newCandle.close, 576);
+    const ema676 = calcEma(lastKnown.ema676, newCandle.close, 676);
 
     // 2. ATR (Incremental - Perfect Precision)
     const calcAtr = (prevAtr: number | undefined, current: Candle, prevClose: number, period: number) => {
@@ -316,13 +416,20 @@ export const updateLastCandle = (prevData: Candle[], newCandle: Candle): Candle 
     // 3. Optimized NW Calculation (O(N) instead of O(N^2))
     const nwParams = calculateNextNadarayaWatson(prevData, newCandle, 20, 3.0);
 
-    // 4. RSI (Windowed but efficient)
-    // We only need the last RSI value. We use a smaller window.
-    const lookback = 200; 
+    // 4. RSI & ADX (Windowed)
+    // We only need the last RSI/ADX value. We use a smaller window.
+    // ADX needs slightly more history for smoothing to stabilize, allow 300
+    const lookback = 300; 
     const context = prevData.slice(-lookback);
     const buffer = [...context, newCandle];
+    
+    // RSI
     const rsiArray = calculateRSI(buffer, 14);
     const lastRsi = rsiArray[rsiArray.length - 1];
+
+    // ADX
+    const adxArray = calculateADX(buffer, 14);
+    const lastAdx = adxArray[adxArray.length - 1];
 
     // 5. Merge
     return {
@@ -330,8 +437,11 @@ export const updateLastCandle = (prevData: Candle[], newCandle: Candle): Candle 
         ema12,
         ema144,
         ema169,
+        ema576,
+        ema676,
         atr,
         rsi: lastRsi,
+        adx: lastAdx,
         nwMid: nwParams.nwMid,
         nwUpper: nwParams.nwUpper,
         nwLower: nwParams.nwLower

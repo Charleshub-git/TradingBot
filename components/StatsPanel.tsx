@@ -27,6 +27,14 @@ const StatsPanel: React.FC<StatsPanelProps> = ({ status, lastCandle, activeTrade
   const ema169 = lastCandle.ema169 || 0;
   const isAboveTunnel = price > ema144 && price > ema169;
   const isBelowTunnel = price < ema144 && price < ema169;
+  
+  // Vegas ADX Variables
+  const adx = lastCandle.adx || 0;
+  const ema576 = lastCandle.ema576 || 0;
+  const ema676 = lastCandle.ema676 || 0;
+  const isBullTrend = ema144 > ema576 && ema169 > ema676;
+  const isBearTrend = ema144 < ema576 && ema169 < ema676;
+  const isAdxStrong = adx > 30;
 
   const getStatusColor = (s: BotStatus) => {
     switch (s) {
@@ -35,6 +43,37 @@ const StatsPanel: React.FC<StatsPanelProps> = ({ status, lastCandle, activeTrade
       default: return 'text-gray-400';
     }
   };
+
+  const getSubStatus = () => {
+      if (strategy === 'SCALPER') {
+          return (
+            <>
+                <span>RSI:</span>
+                <span className={`font-bold ${isOverbought ? 'text-red-400' : isOversold ? 'text-green-400' : 'text-gray-300'}`}>
+                    {rsi.toFixed(0)}
+                </span>
+            </>
+          )
+      } else if (strategy === 'VEGAS') {
+          return (
+             <>
+                <span>Trnd:</span>
+                <span className={`font-bold ${isAboveTunnel ? 'text-green-400' : isBelowTunnel ? 'text-red-400' : 'text-gray-300'}`}>
+                    {isAboveTunnel ? '↑' : isBelowTunnel ? '↓' : '-'}
+                </span>
+            </>
+          )
+      } else {
+           return (
+             <>
+                <span>ADX:</span>
+                <span className={`font-bold ${isAdxStrong ? 'text-green-400' : 'text-gray-300'}`}>
+                    {adx.toFixed(0)}
+                </span>
+            </>
+          )
+      }
+  }
 
   return (
     <div className="grid grid-cols-2 gap-2">
@@ -48,21 +87,7 @@ const StatsPanel: React.FC<StatsPanelProps> = ({ status, lastCandle, activeTrade
           {status.replace('_', ' ')}
         </div>
         <div className="mt-1 text-[10px] text-gray-500 font-mono flex justify-between items-center">
-            {strategy === 'SCALPER' ? (
-                <>
-                   <span>RSI:</span>
-                   <span className={`font-bold ${isOverbought ? 'text-red-400' : isOversold ? 'text-green-400' : 'text-gray-300'}`}>
-                     {rsi.toFixed(0)}
-                   </span>
-                </>
-            ) : (
-                <>
-                   <span>Trnd:</span>
-                   <span className={`font-bold ${isAboveTunnel ? 'text-green-400' : isBelowTunnel ? 'text-red-400' : 'text-gray-300'}`}>
-                     {isAboveTunnel ? '↑' : isBelowTunnel ? '↓' : '-'}
-                   </span>
-                </>
-            )}
+            {getSubStatus()}
         </div>
       </div>
 
@@ -84,7 +109,9 @@ const StatsPanel: React.FC<StatsPanelProps> = ({ status, lastCandle, activeTrade
       <div className="bg-gray-900 border border-gray-800 rounded-md p-2.5 col-span-2">
          <div className="flex items-center gap-1.5 text-gray-400 mb-2">
           <Zap size={12} />
-          <span className="text-[10px] uppercase font-bold tracking-wider">Logic: {strategy === 'SCALPER' ? 'Reversal' : 'Tunnel'}</span>
+          <span className="text-[10px] uppercase font-bold tracking-wider">
+              Logic: {strategy === 'SCALPER' ? 'Reversal' : strategy === 'VEGAS' ? 'Tunnel' : 'ADX Trend'}
+          </span>
         </div>
         <div className="grid grid-cols-2 gap-x-4 gap-y-1">
             {strategy === 'SCALPER' ? (
@@ -102,7 +129,7 @@ const StatsPanel: React.FC<StatsPanelProps> = ({ status, lastCandle, activeTrade
                         <span>{isOverbought ? '>70' : isOversold ? '<30' : 'OK'}</span>
                     </div>
                 </>
-            ) : (
+            ) : strategy === 'VEGAS' ? (
                 <>
                     <div className={`text-[10px] flex justify-between items-center ${ema12 > ema169 ? 'text-green-400 font-bold' : 'text-gray-500'}`}>
                         <span>12 &gt; Tun</span>
@@ -115,6 +142,21 @@ const StatsPanel: React.FC<StatsPanelProps> = ({ status, lastCandle, activeTrade
                      <div className={`text-[10px] flex justify-between items-center col-span-2 text-gray-500`}>
                         <span>Vol Filter</span>
                         <span>{(lastCandle.atr || 0) > 50 ? 'PASS' : 'LOW'}</span>
+                    </div>
+                </>
+            ) : (
+                <>
+                    <div className={`text-[10px] flex justify-between items-center ${isBullTrend ? 'text-green-400 font-bold' : isBearTrend ? 'text-red-400 font-bold' : 'text-gray-500'}`}>
+                        <span>Trend</span>
+                        <span>{isBullTrend ? 'BULL' : isBearTrend ? 'BEAR' : 'NEUT'}</span>
+                    </div>
+                    <div className={`text-[10px] flex justify-between items-center ${isAdxStrong ? 'text-blue-400 font-bold' : 'text-gray-500'}`}>
+                        <span>ADX {'>'} 30</span>
+                        <span>{isAdxStrong ? 'YES' : 'NO'}</span>
+                    </div>
+                    <div className={`text-[10px] flex justify-between items-center col-span-2 text-gray-500`}>
+                        <span>Re-Test</span>
+                        <span>Monitor</span>
                     </div>
                 </>
             )}

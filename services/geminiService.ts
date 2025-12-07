@@ -1,3 +1,4 @@
+
 import { GoogleGenAI } from "@google/genai";
 import { Candle, Strategy } from "../types";
 
@@ -15,9 +16,15 @@ export const analyzeMarket = async (lastCandle: Candle, trend: string, strategy:
   if (!ai) return "API Key not configured. Please set process.env.API_KEY to use Gemini.";
 
   // Define system instruction based on strategy
-  const systemInstruction = strategy === 'SCALPER'
-    ? "Act as a professional crypto quant scalper using a Nadaraya-Watson Envelope + RSI Reversal Strategy on 5m timeframe. Your goal is to identify high-probability reversal setups."
-    : "Act as a professional crypto trader using the Vegas Tunnel Strategy (EMA 144 & 169) on 5m timeframe. Your goal is to identify trend continuation or tunnel breakouts.";
+  let systemInstruction = "";
+  
+  if (strategy === 'SCALPER') {
+      systemInstruction = "Act as a professional crypto quant scalper using a Nadaraya-Watson Envelope + RSI Reversal Strategy on 5m timeframe. Your goal is to identify high-probability reversal setups.";
+  } else if (strategy === 'VEGAS') {
+      systemInstruction = "Act as a professional crypto trader using the Vegas Tunnel Strategy (EMA 144 & 169) on 5m timeframe. Your goal is to identify trend continuation or tunnel breakouts.";
+  } else {
+      systemInstruction = "Act as a sophisticated crypto trader utilizing the Vegas Tunnel ADX strategy. You focus on the Long-Term Trend (EMA 576/676) and ADX Momentum (>30) to confirm Vegas Tunnel breakouts.";
+  }
 
   let dataContext = "";
 
@@ -32,7 +39,7 @@ export const analyzeMarket = async (lastCandle: Candle, trend: string, strategy:
 
         Signal Context: ${trend}
       `;
-  } else {
+  } else if (strategy === 'VEGAS') {
       dataContext = `
         Current Market Data (BTC/USDT 5m):
         - Price: $${lastCandle.close.toFixed(2)}
@@ -41,6 +48,16 @@ export const analyzeMarket = async (lastCandle: Candle, trend: string, strategy:
         - EMA 169 (Tunnel Bottom): ${lastCandle.ema169?.toFixed(2)}
         - ATR (Vol): ${lastCandle.atr?.toFixed(2)}
 
+        Signal Context: ${trend}
+      `;
+  } else {
+      dataContext = `
+        Current Market Data (BTC/USDT 5m):
+        - Price: $${lastCandle.close.toFixed(2)}
+        - ADX (14): ${lastCandle.adx?.toFixed(2)} (Threshold > 30)
+        - EMA 144/169 (Vegas Tunnel): ${lastCandle.ema144?.toFixed(2)} / ${lastCandle.ema169?.toFixed(2)}
+        - EMA 576/676 (Trend Filter): ${lastCandle.ema576?.toFixed(2)} / ${lastCandle.ema676?.toFixed(2)}
+        
         Signal Context: ${trend}
       `;
   }

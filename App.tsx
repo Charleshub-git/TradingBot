@@ -30,7 +30,7 @@ export default function App() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [simulationDelay, setSimulationDelay] = useState(100); // Default to moderate speed
   const [activeTrade, setActiveTrade] = useState<Trade | null>(null);
-  const [tradeHistory, setTradeHistory] = useState<Trade[]>([]);
+  const [tradeHistory, setTradeHistory] = useState<Trade[]>([])
   const [logs, setLogs] = useState<{time: number, message: string, type: 'INFO' | 'SUCCESS' | 'WARNING' | 'ERROR'}[]>([]);
   const [pnl, setPnl] = useState(0);
   const [geminiAnalysis, setGeminiAnalysis] = useState<string>("");
@@ -281,28 +281,34 @@ export default function App() {
 
 
   // --- TRADING LOGIC ---
-  const openTrade = useCallback((candle: Candle, type: 'LONG' | 'SHORT', reason: string) => {
-      if (!candle.atr) return;
-
-      const slDistance = candle.atr * ATR_SL_MULTIPLIER;
-      const tpDistance = slDistance * RISK_REWARD_RATIO;
-      
-      const entryPrice = candle.close;
+  const openTrade = useCallback((candle: Candle, type: 'LONG' | 'SHORT', reason: string, forcedSl?: number, forcedTp?: number) => {
       let stopLossPrice = 0;
       let takeProfitPrice = 0;
 
-      if (type === 'LONG') {
-          stopLossPrice = entryPrice - slDistance;
-          takeProfitPrice = entryPrice + tpDistance;
+      if (forcedSl && forcedTp) {
+          // Explicit SL/TP provided (e.g. by VEGAS_ADX)
+          stopLossPrice = forcedSl;
+          takeProfitPrice = forcedTp;
       } else {
-          stopLossPrice = entryPrice + slDistance;
-          takeProfitPrice = entryPrice - tpDistance;
+          // Default ATR-based Dynamic SL/TP (Scalper/Vegas Original)
+          if (!candle.atr) return;
+          const slDistance = candle.atr * ATR_SL_MULTIPLIER;
+          const tpDistance = slDistance * RISK_REWARD_RATIO;
+          const entryPrice = candle.close;
+
+          if (type === 'LONG') {
+              stopLossPrice = entryPrice - slDistance;
+              takeProfitPrice = entryPrice + tpDistance;
+          } else {
+              stopLossPrice = entryPrice + slDistance;
+              takeProfitPrice = entryPrice - tpDistance;
+          }
       }
 
       const trade: Trade = {
           id: Math.random().toString(36).substr(2, 9),
           type,
-          entryPrice,
+          entryPrice: candle.close,
           entryTime: candle.time,
           status: 'OPEN',
           reason,
@@ -313,7 +319,7 @@ export default function App() {
       setActiveTrade(trade);
       
       const execPrefix = (appMode === 'LIVE' && autoExecute) ? "[REAL EXEC]" : "[SIM]";
-      addLog(`${execPrefix} OPEN ${type} (${currentStrategy}) @ ${entryPrice.toFixed(2)} | TP: ${takeProfitPrice.toFixed(2)} | SL: ${stopLossPrice.toFixed(2)}`, "SUCCESS");
+      addLog(`${execPrefix} OPEN ${type} (${currentStrategy}) @ ${candle.close.toFixed(2)} | TP: ${takeProfitPrice.toFixed(2)} | SL: ${stopLossPrice.toFixed(2)}`, "SUCCESS");
   }, [currentStrategy, appMode, autoExecute]);
 
   const closeTrade = useCallback((candle: Candle, reason: string, forcedPrice?: number) => {
@@ -344,7 +350,9 @@ export default function App() {
     if ((!isPlaying && appMode !== 'LIVE') || data.length === 0) return;
 
     const last = data[data.length - 1];
-    if (!last.rsi || !last.nwUpper || !last.nwLower || !last.atr || !last.ema12 || !last.ema144 || !last.ema169) return;
+    
+    // Safety check for basic indicators
+    if (!last.rsi || !last.atr || !last.ema12 || !last.ema144 || !last.ema169) return;
 
     // --- 1. Exit Logic ---
     if (activeTrade) {
@@ -372,19 +380,19 @@ export default function App() {
 
     // --- 2. Entry Logic ---
     if (currentStrategy === 'SCALPER') {
-        const isBelowLowerBand = last.close < last.nwLower; 
+        const isBelowLowerBand = last.close < (last.nwLower || 0); 
         const isRsiOversold = last.rsi < RSI_OS;
         if (isBelowLowerBand && isRsiOversold) {
             openTrade(last, 'LONG', `[Scalp] RSI ${last.rsi.toFixed(1)} + Price < Band`);
             return;
         }
-        const isAboveUpperBand = last.close > last.nwUpper;
+        const isAboveUpperBand = last.close > (last.nwUpper || 0);
         const isRsiOverbought = last.rsi > RSI_OB;
         if (isAboveUpperBand && isRsiOverbought) {
             openTrade(last, 'SHORT', `[Scalp] RSI ${last.rsi.toFixed(1)} + Price > Band`);
             return;
         }
-    } else {
+    } else if (currentStrategy === 'VEGAS') {
         const isAboveTunnel = last.close > last.ema144 && last.close > last.ema169;
         const ema12CrossUp = last.ema12 > last.ema169;
         if (isAboveTunnel && ema12CrossUp && last.rsi > 50) {
@@ -396,6 +404,64 @@ export default function App() {
         if (isBelowTunnel && ema12CrossDown && last.rsi < 50) {
             const threshold = appMode === 'LIVE' ? 0.3 : 0.7;
             if (Math.random() > threshold) openTrade(last, 'SHORT', `[Vegas] Price < Tunnel + EMA12 Bearish`);
+        }
+    } else if (currentStrategy === 'VEGAS_ADX') {
+        // VEGAS TUNNEL ADX STRATEGY
+        if (data.length < 2) return;
+        const prev = data[data.length - 2];
+        const ema144 = last.ema144 || 0;
+        const ema169 = last.ema169 || 0;
+        const ema576 = last.ema576 || 0;
+        const ema676 = last.ema676 || 0;
+        const adx = last.adx || 0;
+        
+        // C_ADX: Momentum
+        if (adx <= 30) return;
+
+        // Dynamic Tunnel Boundaries
+        const vegasMin0 = Math.min(ema144, ema169);
+        const vegasMax0 = Math.max(ema144, ema169);
+        const vegasMin1 = Math.min(prev.ema144 || 0, prev.ema169 || 0);
+        const vegasMax1 = Math.max(prev.ema144 || 0, prev.ema169 || 0);
+
+        // --- LONG CHECK ---
+        // C_Trend_Long
+        const isBullishTrend = (ema144 > ema576) && (ema169 > ema676);
+        // C_Re-test_Long
+        const isLongReTest = (prev.close > vegasMax1) && (last.close > vegasMin0); // Simplified check: Close above min is partial retest
+
+        if (isBullishTrend && isLongReTest) {
+             // SL_Long: Lowest Low of last 30 candles
+             const lookbackData = data.slice(-30);
+             const swingLow = Math.min(...lookbackData.map(d => d.low));
+             
+             // TP_Long: R * Risk
+             const risk = last.close - swingLow;
+             if (risk <= 0) return; // Invalid risk
+             const takeProfit = last.close + (1.5 * risk);
+
+             openTrade(last, 'LONG', `[VADX] Trend Bull + ADX > 30`, swingLow, takeProfit);
+             return;
+        }
+
+        // --- SHORT CHECK ---
+        // C_Trend_Short
+        const isBearishTrend = (ema144 < ema576) && (ema169 < ema676);
+        // C_Re-test_Short
+        const isShortReTest = (prev.close < vegasMin1) && (last.close < vegasMax0);
+
+        if (isBearishTrend && isShortReTest) {
+             // SL_Short: Highest High of last 30 candles
+             const lookbackData = data.slice(-30);
+             const swingHigh = Math.max(...lookbackData.map(d => d.high));
+
+             // TP_Short
+             const risk = swingHigh - last.close;
+             if (risk <= 0) return;
+             const takeProfit = last.close - (1.5 * risk);
+             
+             openTrade(last, 'SHORT', `[VADX] Trend Bear + ADX > 30`, swingHigh, takeProfit);
+             return;
         }
     }
 
@@ -451,9 +517,12 @@ export default function App() {
     if (currentStrategy === 'SCALPER') {
         if (last.rsi! > RSI_OB && last.close > last.nwUpper!) signal = "POTENTIAL SHORT (Extreme High)";
         if (last.rsi! < RSI_OS && last.close < last.nwLower!) signal = "POTENTIAL LONG (Extreme Low)";
-    } else {
+    } else if (currentStrategy === 'VEGAS') {
         if (last.ema12! > last.ema169!) signal = "BULLISH TREND (Above Tunnel)";
         if (last.ema12! < last.ema144!) signal = "BEARISH TREND (Below Tunnel)";
+    } else {
+        if (last.adx! > 30) signal = "STRONG MOMENTUM";
+        else signal = "WEAK MOMENTUM";
     }
     
     addLog(`Requesting Gemini Analysis for ${currentStrategy}...`, "INFO");
@@ -485,15 +554,19 @@ export default function App() {
       {/* Header */}
       <div className="flex justify-between items-center bg-gray-900 p-4 rounded-lg border border-gray-800 shrink-0">
         <div className="flex items-center gap-4">
-          <div className={`p-2 rounded-lg transition-colors ${currentStrategy === 'SCALPER' ? 'bg-blue-600' : 'bg-purple-600'}`}>
+          <div className={`p-2 rounded-lg transition-colors ${currentStrategy === 'SCALPER' ? 'bg-blue-600' : currentStrategy === 'VEGAS' ? 'bg-purple-600' : 'bg-indigo-600'}`}>
             <Layers size={24} className="text-white" />
           </div>
           <div>
             <h1 className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-purple-400">
-              {currentStrategy === 'SCALPER' ? 'Nadaraya-Watson Scalper' : 'Vegas Tunnel Bot'}
+              {currentStrategy === 'SCALPER' ? 'Nadaraya-Watson Scalper' : currentStrategy === 'VEGAS' ? 'Vegas Tunnel Bot' : 'Vegas Tunnel ADX'}
             </h1>
             <div className="flex items-center gap-2 text-xs text-gray-500">
-                <span>{currentStrategy === 'SCALPER' ? 'Reversal • NW Env • RSI' : 'Trend • EMA Tunnel'}</span>
+                <span>
+                    {currentStrategy === 'SCALPER' ? 'Reversal • NW Env • RSI' 
+                    : currentStrategy === 'VEGAS' ? 'Trend • EMA Tunnel'
+                    : 'Trend • EMA Tunnel • ADX'}
+                </span>
                 {appMode !== 'IDLE' && (
                      <span className={`flex items-center gap-1 px-2 py-0.5 rounded border ${
                          appMode === 'LIVE' ? 'bg-red-900/50 text-red-400 border-red-800' : 'bg-blue-900/50 text-blue-400 border-blue-800'
@@ -519,6 +592,12 @@ export default function App() {
                     className={`px-3 py-1.5 text-xs font-bold rounded-md transition-all ${currentStrategy === 'VEGAS' ? 'bg-purple-600 text-white' : 'text-gray-400 hover:text-white'}`}
                 >
                     VEGAS
+                </button>
+                <button 
+                    onClick={() => setCurrentStrategy('VEGAS_ADX')}
+                    className={`px-3 py-1.5 text-xs font-bold rounded-md transition-all ${currentStrategy === 'VEGAS_ADX' ? 'bg-indigo-600 text-white' : 'text-gray-400 hover:text-white'}`}
+                >
+                    ADX
                 </button>
              </div>
         </div>

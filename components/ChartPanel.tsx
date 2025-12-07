@@ -1,5 +1,4 @@
 
-
 import React, { useState, useEffect, useRef } from 'react';
 import { Eye, EyeOff } from 'lucide-react';
 import { createChart, ColorType, CrosshairMode, IChartApi, ISeriesApi, Time, SeriesMarker } from 'lightweight-charts';
@@ -30,6 +29,10 @@ const ChartPanel: React.FC<ChartPanelProps> = ({ data, strategy, isPlaying }) =>
   const ema12Ref = useRef<ISeriesApi<"Line"> | null>(null);
   const ema144Ref = useRef<ISeriesApi<"Line"> | null>(null);
   const ema169Ref = useRef<ISeriesApi<"Line"> | null>(null);
+  
+  // Vegas ADX Indicators
+  const ema576Ref = useRef<ISeriesApi<"Line"> | null>(null);
+  const ema676Ref = useRef<ISeriesApi<"Line"> | null>(null);
 
   // Track state for incremental updates
   const lastProcessedTimeRef = useRef<number | null>(null);
@@ -164,16 +167,23 @@ const ChartPanel: React.FC<ChartPanelProps> = ({ data, strategy, isPlaying }) =>
             if (!upperBandRef.current) upperBandRef.current = chartRef.current.addLineSeries({ color: '#06b6d4', lineWidth: 2, title: 'Top Band', crosshairMarkerVisible: false });
             if (!midBandRef.current) midBandRef.current = chartRef.current.addLineSeries({ color: '#eab308', lineWidth: 2, title: 'Midline', crosshairMarkerVisible: false });
             if (!lowerBandRef.current) lowerBandRef.current = chartRef.current.addLineSeries({ color: '#d946ef', lineWidth: 2, title: 'Bot Band', crosshairMarkerVisible: false });
-            cleanSeries(ema12Ref); cleanSeries(ema144Ref); cleanSeries(ema169Ref);
-        } else {
+            cleanSeries(ema12Ref); cleanSeries(ema144Ref); cleanSeries(ema169Ref); cleanSeries(ema576Ref); cleanSeries(ema676Ref);
+        } else if (strategy === 'VEGAS') {
             if (!ema12Ref.current) ema12Ref.current = chartRef.current.addLineSeries({ color: '#eab308', lineWidth: 2, title: 'EMA 12', crosshairMarkerVisible: false });
             if (!ema144Ref.current) ema144Ref.current = chartRef.current.addLineSeries({ color: '#06b6d4', lineWidth: 2, title: 'EMA 144', crosshairMarkerVisible: false });
             if (!ema169Ref.current) ema169Ref.current = chartRef.current.addLineSeries({ color: '#d946ef', lineWidth: 2, title: 'EMA 169', crosshairMarkerVisible: false });
-            cleanSeries(upperBandRef); cleanSeries(midBandRef); cleanSeries(lowerBandRef);
+            cleanSeries(upperBandRef); cleanSeries(midBandRef); cleanSeries(lowerBandRef); cleanSeries(ema576Ref); cleanSeries(ema676Ref);
+        } else if (strategy === 'VEGAS_ADX') {
+            if (!ema144Ref.current) ema144Ref.current = chartRef.current.addLineSeries({ color: '#06b6d4', lineWidth: 2, title: 'EMA 144', crosshairMarkerVisible: false });
+            if (!ema169Ref.current) ema169Ref.current = chartRef.current.addLineSeries({ color: '#d946ef', lineWidth: 2, title: 'EMA 169', crosshairMarkerVisible: false });
+            if (!ema576Ref.current) ema576Ref.current = chartRef.current.addLineSeries({ color: '#3730a3', lineWidth: 2, title: 'EMA 576', crosshairMarkerVisible: false }); // Indigo
+            if (!ema676Ref.current) ema676Ref.current = chartRef.current.addLineSeries({ color: '#4c1d95', lineWidth: 2, title: 'EMA 676', crosshairMarkerVisible: false }); // Violet
+             cleanSeries(upperBandRef); cleanSeries(midBandRef); cleanSeries(lowerBandRef); cleanSeries(ema12Ref);
         }
     } else {
         cleanSeries(upperBandRef); cleanSeries(midBandRef); cleanSeries(lowerBandRef);
         cleanSeries(ema12Ref); cleanSeries(ema144Ref); cleanSeries(ema169Ref);
+        cleanSeries(ema576Ref); cleanSeries(ema676Ref);
     }
 
     // --- OPTIMIZED UPDATE LOGIC ---
@@ -204,10 +214,15 @@ const ChartPanel: React.FC<ChartPanelProps> = ({ data, strategy, isPlaying }) =>
                 upperBandRef.current?.update({ time: t, value: rawLast.nwUpper || rawLast.close });
                 midBandRef.current?.update({ time: t, value: rawLast.nwMid || rawLast.close });
                 lowerBandRef.current?.update({ time: t, value: rawLast.nwLower || rawLast.close });
-            } else {
+            } else if (strategy === 'VEGAS') {
                 ema12Ref.current?.update({ time: t, value: rawLast.ema12 || rawLast.close });
                 ema144Ref.current?.update({ time: t, value: rawLast.ema144 || rawLast.close });
                 ema169Ref.current?.update({ time: t, value: rawLast.ema169 || rawLast.close });
+            } else if (strategy === 'VEGAS_ADX') {
+                ema144Ref.current?.update({ time: t, value: rawLast.ema144 || rawLast.close });
+                ema169Ref.current?.update({ time: t, value: rawLast.ema169 || rawLast.close });
+                ema576Ref.current?.update({ time: t, value: rawLast.ema576 || rawLast.close });
+                ema676Ref.current?.update({ time: t, value: rawLast.ema676 || rawLast.close });
             }
         }
     } else {
@@ -233,10 +248,15 @@ const ChartPanel: React.FC<ChartPanelProps> = ({ data, strategy, isPlaying }) =>
                 upperBandRef.current?.setData(mapLine('nwUpper'));
                 midBandRef.current?.setData(mapLine('nwMid'));
                 lowerBandRef.current?.setData(mapLine('nwLower'));
-            } else {
+            } else if (strategy === 'VEGAS') {
                 ema12Ref.current?.setData(mapLine('ema12'));
                 ema144Ref.current?.setData(mapLine('ema144'));
                 ema169Ref.current?.setData(mapLine('ema169'));
+            } else if (strategy === 'VEGAS_ADX') {
+                ema144Ref.current?.setData(mapLine('ema144'));
+                ema169Ref.current?.setData(mapLine('ema169'));
+                ema576Ref.current?.setData(mapLine('ema576'));
+                ema676Ref.current?.setData(mapLine('ema676'));
             }
         }
 
@@ -281,8 +301,8 @@ const ChartPanel: React.FC<ChartPanelProps> = ({ data, strategy, isPlaying }) =>
         <div className="flex flex-col gap-1 min-w-0">
              <h2 className="text-gray-800 text-sm font-bold uppercase tracking-wider flex items-center gap-2">
                 BTC/USDT 5m • 
-                <span className={strategy === 'SCALPER' ? 'text-cyan-700' : 'text-purple-700'}>
-                    {strategy === 'SCALPER' ? 'NW Envelope + RSI' : 'Vegas Tunnel'}
+                <span className={strategy === 'SCALPER' ? 'text-cyan-700' : strategy === 'VEGAS' ? 'text-purple-700' : 'text-indigo-700'}>
+                    {strategy === 'SCALPER' ? 'NW Envelope + RSI' : strategy === 'VEGAS' ? 'Vegas Tunnel' : 'Vegas + ADX'}
                 </span>
             </h2>
              {legendData ? (
@@ -320,11 +340,17 @@ const ChartPanel: React.FC<ChartPanelProps> = ({ data, strategy, isPlaying }) =>
                         <div className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-yellow-400"></span> Mid</div>
                         <div className="flex items-center gap-1"><span className="w-2 h-2 rounded-full" style={{backgroundColor: '#d946ef'}}></span> Bot</div>
                       </>
-                  ) : (
+                  ) : strategy === 'VEGAS' ? (
                       <>
                         <div className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-yellow-400"></span> EMA12</div>
                         <div className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-cyan-400"></span> Top</div>
                         <div className="flex items-center gap-1"><span className="w-2 h-2 rounded-full" style={{backgroundColor: '#d946ef'}}></span> Bot</div>
+                      </>
+                  ) : (
+                      <>
+                        <div className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-cyan-400"></span> Tun</div>
+                        <div className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-indigo-700"></span> 576</div>
+                        <div className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-purple-900"></span> 676</div>
                       </>
                   )}
                </div>

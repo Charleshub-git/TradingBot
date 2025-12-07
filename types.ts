@@ -1,5 +1,5 @@
 
-export type Strategy = 'SCALPER' | 'VEGAS';
+export type Strategy = 'SCALPER' | 'VEGAS' | 'VEGAS_ADX';
 export type DataSource = 'BINANCE' | 'ALPACA' | 'FMP' | 'CSV';
 
 export interface Candle {
@@ -19,6 +19,10 @@ export interface Candle {
   ema12?: number;
   ema144?: number;
   ema169?: number;
+  // Vegas ADX Additional Indicators
+  ema576?: number;
+  ema676?: number;
+  adx?: number;
 }
 
 export interface Trade {
