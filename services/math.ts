@@ -171,6 +171,64 @@ export const calculateNadarayaWatson = (data: Candle[], bandwidth: number = 50, 
 };
 
 /**
+ * Calculates the Nadaraya-Watson Envelope for a single new candle relative to history.
+ * Optimized O(N) calculation instead of O(N^2).
+ */
+export const calculateNextNadarayaWatson = (
+  history: Candle[],
+  newCandle: Candle,
+  bandwidth: number = 50,
+  multiplier: number = 3
+): { nwMid: number, nwUpper: number, nwLower: number } => {
+    // History contains previous candles. We treat newCandle as the last point.
+    // Window size
+    const lookback = Math.min(500, history.length);
+    const startIndex = Math.max(0, history.length - lookback);
+    
+    // We are calculating for the point at index = history.length (the new candle's position relative to history)
+    const i = history.length; 
+    
+    let sumWeights = 0;
+    let sumWeightedClose = 0;
+    
+    // 1. Calculate weighted average (Estimator)
+    for (let j = startIndex; j < history.length; j++) {
+        const distance = i - j;
+        const weight = Math.exp(-(distance * distance) / (2 * bandwidth * bandwidth));
+        sumWeights += weight;
+        sumWeightedClose += history[j].close * weight;
+    }
+    
+    // Add current candle (distance 0, weight 1.0)
+    const currentWeight = 1.0; // exp(0) = 1
+    sumWeights += currentWeight;
+    sumWeightedClose += newCandle.close * currentWeight;
+    
+    const yHat = sumWeightedClose / sumWeights;
+    
+    // 2. Calculate Mean Absolute Error (MAE) for the band
+    let sumWeightedDiff = 0;
+    
+    for (let j = startIndex; j < history.length; j++) {
+        const distance = i - j;
+        const weight = Math.exp(-(distance * distance) / (2 * bandwidth * bandwidth));
+        sumWeightedDiff += weight * Math.abs(history[j].close - yHat);
+    }
+    
+    // Add current candle diff
+    sumWeightedDiff += currentWeight * Math.abs(newCandle.close - yHat);
+    
+    const mae = sumWeightedDiff / sumWeights;
+    
+    return {
+        nwMid: yHat,
+        nwUpper: yHat + (multiplier * mae),
+        nwLower: yHat - (multiplier * mae)
+    };
+}
+
+
+/**
  * Process a candle array and attach all indicators
  */
 export const processIndicators = (candles: Candle[]): Candle[] => {
@@ -255,30 +313,27 @@ export const updateLastCandle = (prevData: Candle[], newCandle: Candle): Candle 
     };
     const atr = calcAtr(lastKnown.atr, newCandle, lastKnown.close, 14);
 
-    // 3. NW & RSI (Windowed - Optimized)
-    // Nadaraya-Watson and RSI stabilize quickly. We can use a sliding window 
-    // of the last ~500 candles to calculate the current tip value efficiently.
-    const lookback = 500;
+    // 3. Optimized NW Calculation (O(N) instead of O(N^2))
+    const nwParams = calculateNextNadarayaWatson(prevData, newCandle, 20, 3.0);
+
+    // 4. RSI (Windowed but efficient)
+    // We only need the last RSI value. We use a smaller window.
+    const lookback = 200; 
     const context = prevData.slice(-lookback);
     const buffer = [...context, newCandle];
-    
-    // We run the standard processor on this small buffer
-    // This gives us the correct NW and RSI for the *last* element
-    const processedBuffer = processIndicators(buffer);
-    const processedLast = processedBuffer[processedBuffer.length - 1];
+    const rsiArray = calculateRSI(buffer, 14);
+    const lastRsi = rsiArray[rsiArray.length - 1];
 
-    // 4. Merge
-    // We prefer the Incremental EMA/ATR (preserves infinite history state)
-    // And the Windowed NW/RSI (computationally feasible)
+    // 5. Merge
     return {
         ...newCandle,
         ema12,
         ema144,
         ema169,
         atr,
-        rsi: processedLast.rsi,
-        nwMid: processedLast.nwMid,
-        nwUpper: processedLast.nwUpper,
-        nwLower: processedLast.nwLower
+        rsi: lastRsi,
+        nwMid: nwParams.nwMid,
+        nwUpper: nwParams.nwUpper,
+        nwLower: nwParams.nwLower
     };
 };

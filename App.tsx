@@ -17,7 +17,7 @@ const RSI_OB = 70;
 const RSI_OS = 30;
 const ATR_SL_MULTIPLIER = 2.5; // Dynamic Stop Loss Distance
 const RISK_REWARD_RATIO = 1.5; // Take Profit relative to SL distance
-const MAX_STORED_CANDLES = 3000; // Rolling buffer size to maintain performance
+const MAX_STORED_CANDLES = 1000; // Rolling buffer size to maintain performance
 
 type AppMode = 'IDLE' | 'BACKTEST' | 'LIVE';
 

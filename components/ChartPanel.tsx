@@ -1,4 +1,5 @@
 
+
 import React, { useState, useEffect, useRef } from 'react';
 import { Eye, EyeOff } from 'lucide-react';
 import { createChart, ColorType, CrosshairMode, IChartApi, ISeriesApi, Time, SeriesMarker } from 'lightweight-charts';
@@ -147,7 +148,7 @@ const ChartPanel: React.FC<ChartPanelProps> = ({ data, strategy, isPlaying }) =>
 
   // Update Data and Indicators
   useEffect(() => {
-    if (!chartRef.current || !candleSeriesRef.current) return;
+    if (!chartRef.current || !candleSeriesRef.current || data.length === 0) return;
 
     // Helper to clean up series
     const cleanSeries = (ref: React.MutableRefObject<ISeriesApi<"Line"> | null>) => {
@@ -175,34 +176,29 @@ const ChartPanel: React.FC<ChartPanelProps> = ({ data, strategy, isPlaying }) =>
         cleanSeries(ema12Ref); cleanSeries(ema144Ref); cleanSeries(ema169Ref);
     }
 
-    // Format Data
-    const formattedData = data
-        .filter(d => d.time && !isNaN(d.open))
-        .map(d => ({
-            time: (d.time / 1000) as Time,
-            open: d.open,
-            high: d.high,
-            low: d.low,
-            close: d.close,
-        }));
-
-    if (formattedData.length === 0) return;
-
-    // --- UPDATE LOGIC (Incremental vs Full Reset) ---
-    const lastCandle = formattedData[formattedData.length - 1];
+    // --- OPTIMIZED UPDATE LOGIC ---
+    // We only access the last element to check for time
+    const rawLast = data[data.length - 1];
     
     // Check if this is a simple append (one new candle, time moved forward)
     // We strictly check if the time is newer to allow for rolling buffers (where length stays same)
-    const isNewTime = lastProcessedTimeRef.current !== null && (lastCandle.time as number) > lastProcessedTimeRef.current!;
+    const isNewTime = lastProcessedTimeRef.current !== null && 
+                      (rawLast.time) > lastProcessedTimeRef.current!;
 
     if (isNewTime) {
-        // 1. Update Candle
-        candleSeriesRef.current.update(lastCandle);
-
-        // 2. Update Indicators
-        const rawLast = data[data.length - 1];
+        // FAST PATH: Update ONLY the last point (O(1))
+        // Avoid mapping the entire data array
         const t = (rawLast.time / 1000) as Time;
-        
+        const lastCandleFormatted = {
+            time: t,
+            open: rawLast.open,
+            high: rawLast.high,
+            low: rawLast.low,
+            close: rawLast.close,
+        };
+
+        candleSeriesRef.current.update(lastCandleFormatted);
+
         if (showIndicators) {
             if (strategy === 'SCALPER') {
                 upperBandRef.current?.update({ time: t, value: rawLast.nwUpper || rawLast.close });
@@ -215,7 +211,19 @@ const ChartPanel: React.FC<ChartPanelProps> = ({ data, strategy, isPlaying }) =>
             }
         }
     } else {
-        // FULL RESET (Load new CSV, change timeframe, first load, or strategy change)
+        // SLOW PATH: FULL RESET (O(N))
+        // Only executed on initialization, strategy change, or full reset
+        
+        const formattedData = data
+            .filter(d => d.time && !isNaN(d.open))
+            .map(d => ({
+                time: (d.time / 1000) as Time,
+                open: d.open,
+                high: d.high,
+                low: d.low,
+                close: d.close,
+            }));
+
         candleSeriesRef.current.setData(formattedData);
         
         // Reset Indicators
@@ -239,12 +247,12 @@ const ChartPanel: React.FC<ChartPanelProps> = ({ data, strategy, isPlaying }) =>
     }
 
     // Update Refs
-    lastProcessedTimeRef.current = (lastCandle.time as number);
-    prevDataLengthRef.current = formattedData.length;
+    lastProcessedTimeRef.current = (rawLast.time as number);
+    prevDataLengthRef.current = data.length;
 
     // Markers
     const markers: SeriesMarker<Time>[] = [{
-        time: lastCandle.time,
+        time: rawLast.time,
         position: 'aboveBar',
         color: '#f59e0b',
         shape: 'arrowDown',
@@ -254,16 +262,13 @@ const ChartPanel: React.FC<ChartPanelProps> = ({ data, strategy, isPlaying }) =>
     candleSeriesRef.current.setMarkers(markers);
 
     // Update Legend
-    if (data.length > 0) {
-        const last = data[data.length - 1];
-        setLegendData({
-            time: last.time / 1000,
-            open: last.open,
-            high: last.high,
-            low: last.low,
-            close: last.close
-        });
-    }
+    setLegendData({
+        time: rawLast.time / 1000,
+        open: rawLast.open,
+        high: rawLast.high,
+        low: rawLast.low,
+        close: rawLast.close
+    });
 
   }, [data, strategy, showIndicators, isPlaying]);
 
