@@ -665,7 +665,7 @@ export default function App() {
         </div>
 
         {/* Right Sidebar - Stats and Logs */}
-        <div className="w-96 shrink-0 h-full flex flex-col gap-4">
+        <div className="w-80 shrink-0 h-full flex flex-col gap-4">
             {/* Stats */}
             <div className="shrink-0">
                <StatsPanel 
